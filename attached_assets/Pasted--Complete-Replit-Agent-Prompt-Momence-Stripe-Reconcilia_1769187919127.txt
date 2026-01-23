@@ -1,0 +1,448 @@
+# Complete Replit Agent Prompt: Momence-Stripe Reconciliation Tool
+
+Copy this entire prompt into Replit Agent:
+
+---
+
+Build a web application for reconciling Momence (yoga booking system) payments with Stripe payment data for De Nieuwe Yogaschool (Amsterdam yoga studio).
+
+## Project Requirements
+
+### What the tool does:
+1. User uploads 2 CSV files: Momence export and Stripe export
+2. Tool aggregates transactions by customer email
+3. Compares totals between systems
+4. Identifies matches and discrepancies
+5. Generates Excel report with results
+
+### Technical Stack:
+- Python 3.11+ with Flask
+- SQLite for data storage
+- Pandas for data processing
+- OpenPyXL for Excel generation
+- Tailwind CSS (via CDN) for styling
+- Vanilla JavaScript for frontend
+
+## Data Structure
+
+### Momence CSV columns:
+- Category, Item, Date, Sale value, Tax, Refunded, Payment method, Payment status, Sale reference, Sold by, Paying Customer email, Paying Customer name, Customer email, Customer name, Location, Note
+
+### Stripe CSV columns:
+- id, Created date (UTC), Amount, Amount Refunded, Currency, Fee, Status, Customer Email, Payment Source Type
+- **Important**: Fee is in CENTS, must divide by 100 to get euros
+
+### Payment methods that go through Stripe:
+- Card, iDEAL, SEPA Direct Debit, Card reader
+
+### Payment methods that DON'T go through Stripe:
+- Class Pass, urban-sports-club, Gift card
+
+## Business Logic
+
+### Reconciliation Method:
+**Aggregate by customer email, NOT line-by-line matching**
+
+1. **Momence side:**
+   - Filter only Stripe payment methods
+   - Group by "Customer email"
+   - Sum "Sale value" per customer
+
+2. **Stripe side:**
+   - Filter only Status = "Paid"
+   - Convert Fee from cents to euros (divide by 100)
+   - Calculate Net = Amount - (Fee/100)
+   - Group by "Customer Email"
+   - Sum Amount and Fee per customer
+
+3. **Comparison:**
+   - Match customers by email
+   - Calculate difference = Momence total - Stripe amount
+   - Categorize:
+     - "match" if difference < €1
+     - "small_diff" if difference €1-5
+     - "large_diff" if difference > €5
+     - "only_in_momence" if customer not in Stripe
+     - "only_in_stripe" if customer not in Momence
+
+## Database Schema
+
+```sql
+CREATE TABLE reconciliation_sessions (
+    id TEXT PRIMARY KEY,
+    period TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    momence_total REAL,
+    stripe_total REAL,
+    stripe_fees REAL,
+    matched_count INTEGER,
+    unmatched_count INTEGER,
+    status TEXT DEFAULT 'completed'
+);
+
+CREATE TABLE momence_transactions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT,
+    sale_reference TEXT,
+    category TEXT,
+    item TEXT,
+    date TEXT,
+    sale_value REAL,
+    tax REAL,
+    payment_method TEXT,
+    customer_email TEXT,
+    FOREIGN KEY (session_id) REFERENCES reconciliation_sessions(id)
+);
+
+CREATE TABLE stripe_transactions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT,
+    charge_id TEXT,
+    amount REAL,
+    fee REAL,
+    created_date TEXT,
+    customer_email TEXT,
+    status TEXT,
+    FOREIGN KEY (session_id) REFERENCES reconciliation_sessions(id)
+);
+
+CREATE TABLE customer_comparison (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT,
+    customer_email TEXT,
+    momence_total REAL,
+    stripe_amount REAL,
+    stripe_fee REAL,
+    stripe_net REAL,
+    difference REAL,
+    match_status TEXT,
+    FOREIGN KEY (session_id) REFERENCES reconciliation_sessions(id)
+);
+
+CREATE TABLE payment_method_summary (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT,
+    payment_method TEXT,
+    transaction_count INTEGER,
+    total_amount REAL,
+    percentage REAL,
+    FOREIGN KEY (session_id) REFERENCES reconciliation_sessions(id)
+);
+```
+
+## User Interface Design
+
+### Design Inspiration: https://denieuweyogaschool.nl/
+
+**Color Palette:**
+- Primary beige: #F5F1E8 (backgrounds)
+- Primary brown: #8B7355 (headers, important text)
+- Accent terracotta: #D4916C (buttons, highlights)
+- Text dark: #2C2C2C (body text)
+- Success green: #7FA650 (matched items)
+- Warning orange: #E8A87C (differences/review needed)
+- Error red: #C85C5C (errors)
+- Border light: #E0D5C7 (subtle borders)
+
+**Design Principles:**
+- Clean and minimalist with lots of white space
+- Warm, inviting earth tones
+- Rounded corners (8px border-radius)
+- Smooth transitions and hover effects
+- Clear typography hierarchy
+- Mobile-responsive
+
+## Pages to Build
+
+### 1. Upload Page (/)
+
+**Layout:**
+```
+┌─────────────────────────────────────────┐
+│ Header: "DNYS Reconciliatie Tool"      │
+├─────────────────────────────────────────┤
+│                                         │
+│  Momence-Stripe Reconciliatie          │
+│  Upload je exports voor afstemming     │
+│                                         │
+│  ┌───────────────────────────────┐     │
+│  │ Periode: [2025-01____]        │     │
+│  │                               │     │
+│  │ Momence CSV                   │     │
+│  │ ┌─────────────────────┐       │     │
+│  │ │  📁 Upload zone      │       │     │
+│  │ │  Click or drag file  │       │     │
+│  │ └─────────────────────┘       │     │
+│  │                               │     │
+│  │ Stripe CSV                    │     │
+│  │ ┌─────────────────────┐       │     │
+│  │ │  📁 Upload zone      │       │     │
+│  │ │  Click or drag file  │       │     │
+│  │ └─────────────────────┘       │     │
+│  │                               │     │
+│  │ [Start Reconciliatie]         │     │
+│  └───────────────────────────────┘     │
+│                                         │
+│  📋 Instructies:                        │
+│  1. Momence: Analytics > Reports >     │
+│     Total Sales > Download CSV         │
+│  2. Stripe: Payments > Export > CSV    │
+│  3. Upload beide bestanden             │
+│                                         │
+└─────────────────────────────────────────┘
+```
+
+**Functionality:**
+- Auto-fill period field with current month (YYYY-MM format)
+- Show filename when file selected
+- Validate both files uploaded
+- Show loading spinner during processing
+- Redirect to results page when complete
+
+### 2. Results Page (/results/<session_id>)
+
+**Layout:**
+```
+┌─────────────────────────────────────────────────────────┐
+│ Reconciliatie Resultaten              [Download Excel]  │
+│ Periode: 2025-01                                        │
+├─────────────────────────────────────────────────────────┤
+│                                                         │
+│ ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐      │
+│ │Momence  │ │Stripe   │ │Gematcht │ │Verschillen│    │
+│ │€186,685 │ │€160,000 │ │  1,234  │ │    12     │    │
+│ └─────────┘ └─────────┘ └─────────┘ └─────────┘      │
+│                                                         │
+│ Klant Vergelijking      [Alles][Gematcht][Verschillen]│
+│ ┌─────────────────────────────────────────────────────┐│
+│ │Email         │Momence │Stripe  │Verschil│Status    ││
+│ ├──────────────────────────────────────────────────────┤│
+│ │abc@mail.com  │€875.00 │€875.00 │€0.00   │✓ Match  ││
+│ │xyz@mail.com  │€65.00  │€64.50  │€0.50   │⚠ Verschil││
+│ └─────────────────────────────────────────────────────┘│
+│                                                         │
+│ Payment Method Breakdown                                │
+│ ┌─────────────────────────────────────────────────────┐│
+│ │Method        │Count  │Amount    │%      │           ││
+│ ├──────────────────────────────────────────────────────┤│
+│ │iDEAL         │2,450  │€82,609   │44.3%  │███████   ││
+│ │Card          │1,234  │€46,743   │25.0%  │████      ││
+│ │Card reader   │  567  │€13,097   │ 7.0%  │█         ││
+│ └─────────────────────────────────────────────────────┘│
+└─────────────────────────────────────────────────────────┘
+```
+
+**Functionality:**
+- Show summary cards with totals
+- Display customer comparison table with sorting/filtering
+- Show payment method breakdown with visual bars
+- Filter table by: All, Matched, Differences
+- Download Excel button
+
+### 3. Sessions Page (/sessions)
+
+**Layout:**
+```
+┌─────────────────────────────────────────┐
+│ Eerdere Reconciliaties                  │
+├─────────────────────────────────────────┤
+│                                         │
+│ Periode: 2025-01                        │
+│ Datum: 23-01-2025 14:30                │
+│ Gematcht: 1,234 | Verschillen: 12      │
+│ [Bekijk] [Download]                     │
+│                                         │
+│ ─────────────────────────────────────  │
+│                                         │
+│ Periode: 2024-12                        │
+│ Datum: 15-12-2024 09:15                │
+│ Gematcht: 1,189 | Verschillen: 8       │
+│ [Bekijk] [Download]                     │
+│                                         │
+└─────────────────────────────────────────┘
+```
+
+## Excel Report Structure
+
+Generate Excel file with 4 sheets:
+
+### Sheet 1: Samenvatting (Summary)
+```
+Row 1: Title "Reconciliatie Rapport - [Periode]"
+Row 3: "Datum gegenereerd: [timestamp]"
+Row 5: Summary table:
+  | Omschrijving              | Bedrag       |
+  |---------------------------|--------------|
+  | Momence Totaal            | €186,684.77  |
+  | Stripe Totaal             | €160,000.00  |
+  | Stripe Kosten             | €  3,200.00  |
+  | Stripe Netto              | €156,800.00  |
+  | Non-Stripe Betalingen     | € 26,684.77  |
+  |                           |              |
+  | Klanten Gematcht          |      1,234   |
+  | Klanten met Verschillen   |         12   |
+```
+
+### Sheet 2: Klant Vergelijking
+```
+| Klant Email          | Momence  | Stripe   | Verschil | Status      |
+|---------------------|----------|----------|----------|-------------|
+| customer@email.com  | €875.00  | €875.00  | €0.00    | ✓ Match     |
+| other@email.com     | €65.00   | €64.50   | €0.50    | ⚠ Small Diff|
+```
+
+### Sheet 3: Verschillen (Only rows with differences)
+```
+Same as Sheet 2 but only rows where match_status != 'match'
+```
+
+### Sheet 4: Payment Methods
+```
+| Payment Method       | Aantal | Bedrag      | % van Totaal |
+|---------------------|--------|-------------|--------------|
+| iDEAL               | 2,450  | €82,608.74  | 44.3%        |
+| Card                | 1,234  | €46,743.49  | 25.0%        |
+```
+
+Apply formatting:
+- Headers: Bold, background color #8B7355 (brown), white text
+- Matched rows: Light green background (#E8F5E9)
+- Difference rows: Light orange background (#FFF3E0)
+- Numbers: Right-aligned, 2 decimal places for currency
+
+## File Structure
+
+```
+/
+├── main.py               # Flask app with routes
+├── reconcile.py          # Reconciliation logic
+├── database.py           # SQLite operations
+├── templates/
+│   ├── base.html        # Base template with header/footer
+│   ├── upload.html      # Upload page
+│   ├── results.html     # Results page
+│   └── sessions.html    # Sessions list
+├── static/
+│   └── js/
+│       └── app.js       # Frontend JavaScript
+└── data/
+    └── reconciliation.db # SQLite database (auto-created)
+```
+
+## Important Implementation Notes
+
+1. **Stripe Fee Conversion:** Stripe CSV has fees in CENTS. Must divide by 100:
+   ```python
+   df['Fee_EUR'] = df['Fee'] / 100
+   df['Net'] = df['Amount'] - df['Fee_EUR']
+   ```
+
+2. **Customer Email Matching:**
+   - Use lowercase for comparison: `email.lower()`
+   - Handle missing emails gracefully
+
+3. **Payment Method Filtering:**
+   ```python
+   stripe_methods = ['Card', 'iDEAL', 'SEPA Direct Debit', 'Card reader']
+   df_stripe_only = df[df['Payment method'].isin(stripe_methods)]
+   ```
+
+4. **Session ID:** Use UUID for unique session identification
+
+5. **Error Handling:**
+   - Handle missing columns in CSV
+   - Handle empty DataFrames
+   - Show user-friendly error messages
+
+6. **File Cleanup:** Delete temporary CSV files after processing
+
+## UI Components (Use Tailwind CDN)
+
+Include in base.html:
+```html
+<script src="https://cdn.tailwindcss.com"></script>
+```
+
+**Button styles:**
+```css
+.btn-primary {
+  background-color: #D4916C;
+  color: white;
+  padding: 12px 24px;
+  border-radius: 8px;
+  font-weight: 500;
+  transition: all 0.3s ease;
+}
+.btn-primary:hover {
+  background-color: #8B7355;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+}
+```
+
+**Card styles:**
+```css
+.card {
+  background: white;
+  border-radius: 12px;
+  padding: 24px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+}
+```
+
+**Status badges:**
+```css
+.status-match {
+  background-color: #7FA650;
+  color: white;
+  padding: 4px 12px;
+  border-radius: 6px;
+  font-size: 0.875rem;
+}
+.status-diff {
+  background-color: #E8A87C;
+  color: white;
+  padding: 4px 12px;
+  border-radius: 6px;
+  font-size: 0.875rem;
+}
+```
+
+## Testing Data
+
+Example Momence row:
+```
+Category,Item,Date,Sale value,Tax,Refunded,Payment method,Payment status,Sale reference,Sold by,Paying Customer email,Paying Customer name,Customer email,Customer name,Location,Note
+"Class","Yin Yoga","2025-01-15, 10:30 AM","18.00","1.49","0.00","iDEAL","Succeeded","123456","","test@example.com","John Doe","test@example.com","John Doe","Studio",""
+```
+
+Example Stripe row:
+```
+id,Created date (UTC),Amount,Amount Refunded,Currency,Fee,Status,Customer Email
+"ch_123","2025-01-15 10:30:00","18.00","0","eur","53","Paid","test@example.com"
+```
+
+## Success Criteria
+
+The app is successful when:
+1. ✅ User can upload 2 CSV files
+2. ✅ Processing completes in < 30 seconds for 5,000 transactions
+3. ✅ Correctly aggregates by customer email
+4. ✅ Identifies matches (difference < €1)
+5. ✅ Shows clear summary statistics
+6. ✅ Generates downloadable Excel report
+7. ✅ UI matches DNYS design aesthetic (warm, clean, minimal)
+8. ✅ Mobile responsive
+
+## Final Notes
+
+- Database file created automatically in /data/ folder
+- All Dutch language for UI text
+- Round all currency to 2 decimals
+- Show euro symbol: €
+- Date format: DD-MM-YYYY
+- Large numbers format: €1.234,56 (European style with dots and commas)
+- Keep it simple - no authentication, no user accounts needed
+- Focus on functionality over fancy features
+
+Build this application now with all the features described above.
