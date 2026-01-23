@@ -17,9 +17,10 @@ import {
   TrendingUp,
   CreditCard,
   Users,
-  AlertCircle
+  AlertCircle,
+  LayoutGrid
 } from "lucide-react";
-import type { ReconciliationResult, CustomerComparison, PaymentMethodSummary } from "@shared/schema";
+import type { ReconciliationResult, CustomerComparison, PaymentMethodSummary, CategorySummary } from "@shared/schema";
 
 function formatCurrency(value: number | null | undefined): string {
   const num = value ?? 0;
@@ -205,6 +206,42 @@ function PaymentMethodTable({ methods }: { methods: PaymentMethodSummary[] }) {
   );
 }
 
+function CategoryTable({ categories }: { categories: CategorySummary[] }) {
+  const maxAmount = Math.max(...categories.map((c) => c.totalAmount ?? 0), 1);
+
+  if (categories.length === 0) {
+    return (
+      <div className="py-8 text-center text-muted-foreground">
+        <LayoutGrid className="w-10 h-10 mx-auto mb-2 opacity-40" />
+        <p>Geen categorieën beschikbaar</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      {categories.map((cat) => (
+        <div key={cat.id} className="flex items-center gap-4" data-testid={`row-category-${cat.id}`}>
+          <div className="w-40 md:w-48 shrink-0">
+            <p className="font-medium text-sm truncate">{cat.category}</p>
+            <p className="text-xs text-muted-foreground">{cat.transactionCount} transacties</p>
+          </div>
+          <div className="flex-1 h-6 bg-muted rounded-full overflow-hidden">
+            <div
+              className="h-full bg-chart-3 rounded-full transition-all duration-500"
+              style={{ width: `${((cat.totalAmount ?? 0) / maxAmount) * 100}%` }}
+            />
+          </div>
+          <div className="w-28 text-right shrink-0">
+            <p className="font-mono text-sm font-medium">{formatCurrency(cat.totalAmount)}</p>
+            <p className="text-xs text-muted-foreground">{formatPercentage(cat.percentage)}</p>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function LoadingSkeleton() {
   return (
     <div className="space-y-6">
@@ -348,6 +385,17 @@ export default function ResultsPage() {
                 <CustomerTable comparisons={data.comparisons} filter={filter} />
               </CardContent>
             </Card>
+
+            {data.categories && data.categories.length > 0 && (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-lg">Omzet per Categorie</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <CategoryTable categories={data.categories} />
+                </CardContent>
+              </Card>
+            )}
 
             {data.paymentMethods.length > 0 && (
               <Card>

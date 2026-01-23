@@ -1,0 +1,272 @@
+# CORRECTION PROMPT for Replit Agent
+
+**IMPORTANT: The reconciliation is not working correctly. Please fix these issues:**
+
+## Issue 1: Wrong Stripe CSV Column Names
+
+The actual Stripe export uses DIFFERENT column names than expected:
+
+**Current (WRONG):**
+- `Amount` 
+- `Fee`
+- `Customer Email`
+- `Status`
+
+**Correct column names:**
+- `gross` (not Amount)
+- `fee` (not Fee)  
+- `customer_email` (not Customer Email)
+- `reporting_category` (not Status - filter for 'charge' not 'Paid')
+
+**Fix the code to use:**
+```python
+# In reconcile.py _aggregate_stripe function:
+df_charges = df[df['reporting_category'] == 'charge'].copy()
+
+# Fees are ALREADY in euros - do NOT divide by 100
+df_charges['Net'] = df_charges['gross'] - df_charges['fee']
+
+agg = df_charges.groupby('customer_email').agg({
+    'gross': 'sum',
+    'fee': 'sum',
+    'Net': 'sum'
+}).reset_index()
+
+agg.columns = ['customer_email', 'stripe_amount', 'stripe_fee', 'stripe_net']
+```
+
+## Issue 2: Stripe Fees Are ALREADY in Euros
+
+**Current (WRONG):**
+```python
+df['Fee_EUR'] = df['Fee'] / 100  # NO! Fees are already in euros
+```
+
+**Correct:**
+```python
+# Fees are already in euros - use directly
+df['Net'] = df['gross'] - df['fee']
+```
+
+## Issue 3: Add Revenue Categorization
+
+The tool needs to categorize Momence items into revenue categories for accounting.
+
+### Add Category Mapping Logic
+
+Add this to `reconcile.py`:
+
+```python
+def categorize_momence_items(self, df):
+    """Categorize Momence items into revenue categories"""
+    
+    # Define category keywords
+    category_rules = {
+        'Abonnementen': [
+            'membership', 'unlimited', 'abonnement', 'lidmaatschap',
+            'monthly membership', 'yearly membership', 'year membership'
+        ],
+        'Rittenkaarten': [
+            'class card', 'lessenkaart', 'rittenkaart', 'pack'
+        ],
+        'Single Classes': [
+            'single class', 'losse les', '€15', '€16', '€17', '€18',
+            'drop in', 'drop-in'
+        ],
+        'Workshops & Events': [
+            'workshop', 'ceremony', 'event', 'retreat', 'circle',
+            'tantra', 'cacao', 'truffle', 'breathwork', 'sound'
+        ],
+        'Trainings & Opleidingen': [
+            'training', 'opleiding', 'teacher', 'coach', 'facilitator',
+            'certification', '200 uur', 'schoolverlichting'
+        ],
+        'Online': [
+            'livestream', 'online', 'virtual'
+        ],
+        'Horeca - Koffie': [
+            'coffee', 'cappuccino', 'latte', 'espresso', 'macchiato',
+            'flat white', 'cortado', 'americano', 'chai'
+        ],
+        'Horeca - Thee & Dranken': [
+            'tea', 'chai', 'matcha', 'smoothie', 'juice', 'kombucha',
+            'lemonade', 'water'
+        ],
+        'Horeca - Food': [
+            'brownie', 'banana bread', 'bananenbrood', 'bliss ball',
+            'snack', 'soep', 'soup', 'quiche', 'salad'
+        ],
+        'Gift Cards': [
+            'gift card', 'cadeaukaart', 'voucher'
+        ],
+        'Money Credits': [
+            'money credit', 'credit', 'tegoed'
+        ]
+    }
+    
+    def match_category(item_name):
+        """Match item name to category"""
+        item_lower = str(item_name).lower()
+        
+        for category, keywords in category_rules.items():
+            for keyword in keywords:
+                if keyword.lower() in item_lower:
+                    return category
+        
+        return 'Overig'  # Other
+    
+    df['Revenue_Category'] = df['Item'].apply(match_category)
+    return df
+```
+
+### Add Category Summary to Results
+
+In `reconcile.py`, add after comparison:
+
+```python
+def _calculate_category_summary(self, df):
+    """Calculate revenue by category"""
+    # Categorize items
+    df = self.categorize_momence_items(df)
+    
+    # Only Stripe payment methods
+    stripe_methods = ['Card', 'iDEAL', 'SEPA Direct Debit', 'Card reader']
+    df_stripe = df[df['Payment method'].isin(stripe_methods)]
+    
+    category_summary = df_stripe.groupby('Revenue_Category').agg({
+        'Sale value': ['sum', 'count']
+    }).reset_index()
+    
+    category_summary.columns = ['category', 'total', 'count']
+    
+    # Calculate percentages
+    total_revenue = category_summary['total'].sum()
+    category_summary['percentage'] = (category_summary['total'] / total_revenue * 100).round(1)
+    
+    return category_summary
+
+# Call this in process() method:
+category_summary = self._calculate_category_summary(momence_df)
+self._store_category_summary(category_summary)
+```
+
+### Add Database Table for Categories
+
+In `database.py`, add table:
+
+```sql
+CREATE TABLE IF NOT EXISTS category_summary (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT,
+    category TEXT,
+    transaction_count INTEGER,
+    total_amount REAL,
+    percentage REAL,
+    FOREIGN KEY (session_id) REFERENCES reconciliation_sessions(id)
+);
+```
+
+### Add Category Section to Results Page
+
+In `templates/results.html`, add after payment methods section:
+
+```html
+<!-- Revenue Categories -->
+<div class="card mt-8">
+    <h3 class="text-xl font-semibold mb-4" style="color: var(--primary-brown);">
+        Omzet per Categorie
+    </h3>
+    
+    <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+            <thead class="bg-gray-50 border-b">
+                <tr>
+                    <th class="px-4 py-3 text-left">Categorie</th>
+                    <th class="px-4 py-3 text-right">Aantal</th>
+                    <th class="px-4 py-3 text-right">Bedrag</th>
+                    <th class="px-4 py-3 text-right">%</th>
+                    <th class="px-4 py-3 text-left">Visualisatie</th>
+                </tr>
+            </thead>
+            <tbody class="divide-y">
+                {% for cat in category_summary %}
+                <tr class="hover:bg-gray-50">
+                    <td class="px-4 py-3 font-medium">{{ cat.category }}</td>
+                    <td class="px-4 py-3 text-right">{{ cat.count }}</td>
+                    <td class="px-4 py-3 text-right">€{{ "%.2f"|format(cat.total) }}</td>
+                    <td class="px-4 py-3 text-right">{{ cat.percentage }}%</td>
+                    <td class="px-4 py-3">
+                        <div class="w-full bg-gray-200 rounded-full h-2">
+                            <div class="bg-terracotta h-2 rounded-full" 
+                                 style="width: {{ cat.percentage }}%"></div>
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+```
+
+### Add Category Sheet to Excel Export
+
+In `generate_excel_report()`, add 5th sheet:
+
+```python
+# Sheet 5: Revenue Categories
+ws_categories = wb.create_sheet("Omzet Categorieën")
+
+# Headers
+headers = ['Categorie', 'Aantal', 'Bedrag', '% van Totaal']
+for col, header in enumerate(headers, 1):
+    cell = ws_categories.cell(1, col, header)
+    cell.font = Font(bold=True, color='FFFFFF')
+    cell.fill = PatternFill(start_color='8B7355', end_color='8B7355', fill_type='solid')
+    cell.alignment = Alignment(horizontal='center')
+
+# Data
+category_summary = database.get_category_summary(session_id)
+for row_idx, cat in enumerate(category_summary, 2):
+    ws_categories.cell(row_idx, 1, cat['category'])
+    ws_categories.cell(row_idx, 2, cat['count'])
+    ws_categories.cell(row_idx, 3, f"€{cat['total']:.2f}")
+    ws_categories.cell(row_idx, 4, f"{cat['percentage']:.1f}%")
+```
+
+## Issue 4: Case-Sensitive Email Matching
+
+Add email normalization:
+
+```python
+# In _aggregate_momence and _aggregate_stripe:
+df['customer_email'] = df['customer_email'].str.lower().str.strip()
+
+# Or for Momence:
+df['Customer email'] = df['Customer email'].str.lower().str.strip()
+```
+
+## Testing the Fixes
+
+After making these changes, test with the uploaded files:
+- Momence: 6,128 transactions
+- Stripe: 3,209 transactions
+- Should find ~1,274 matching customers
+
+**Expected results:**
+- Matched customers: ~1,200+
+- Total Stripe payment methods in Momence: ~€160,000
+- Stripe fees: ~€3,200
+- Categories should show Abonnementen, Rittenkaarten, Workshops, etc.
+
+## Summary of Changes Needed:
+
+1. ✅ Fix Stripe column names: `gross`, `fee`, `customer_email`, `reporting_category`
+2. ✅ Remove divide-by-100 for fees (already in euros)
+3. ✅ Filter Stripe by `reporting_category == 'charge'` (not Status == Paid)
+4. ✅ Add revenue categorization logic
+5. ✅ Add category summary table and display
+6. ✅ Add category sheet to Excel export
+7. ✅ Normalize email addresses (lowercase, trim)
+
+Please implement all these fixes to make the reconciliation work correctly.

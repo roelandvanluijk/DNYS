@@ -4,7 +4,7 @@ import multer from "multer";
 import Papa from "papaparse";
 import ExcelJS from "exceljs";
 import { storage } from "./storage";
-import { STRIPE_PAYMENT_METHODS, type MatchStatus } from "@shared/schema";
+import { STRIPE_PAYMENT_METHODS, REVENUE_CATEGORY_RULES, type MatchStatus } from "@shared/schema";
 
 const upload = multer({ storage: multer.memoryStorage() });
 
@@ -29,40 +29,31 @@ interface MomenceRow {
 
 interface StripeRow {
   id?: string;
+  created?: string;
   "Created date (UTC)"?: string;
+  gross?: string;
   Amount?: string;
-  "Amount Refunded"?: string;
-  Currency?: string;
+  fee?: string;
   Fee?: string;
-  Status?: string;
+  customer_email?: string;
   "Customer Email"?: string;
-  "Payment Source Type"?: string;
+  reporting_category?: string;
+  Status?: string;
 }
 
 function parseNumber(value: string | undefined): number {
   if (!value) return 0;
   
-  // Remove currency symbols and whitespace
   let cleaned = value.replace(/[€$\s]/g, "").trim();
-  
-  // Detect format by checking the last separator
-  // European format: 1.234,56 or 1234,56 (comma as decimal)
-  // US format: 1,234.56 or 1234.56 (period as decimal)
   
   const lastComma = cleaned.lastIndexOf(",");
   const lastPeriod = cleaned.lastIndexOf(".");
   
   if (lastComma > lastPeriod) {
-    // European format: comma is the decimal separator
-    // Remove periods (thousands separator) and convert comma to period
     cleaned = cleaned.replace(/\./g, "").replace(",", ".");
   } else if (lastPeriod > lastComma) {
-    // US format: period is the decimal separator
-    // Remove commas (thousands separator)
     cleaned = cleaned.replace(/,/g, "");
   } else {
-    // No decimal separator or only one type present
-    // Remove any remaining commas
     cleaned = cleaned.replace(/,/g, "");
   }
   
@@ -79,6 +70,21 @@ function getMatchStatus(difference: number): MatchStatus {
   if (absDiff < 1) return "match";
   if (absDiff < 5) return "small_diff";
   return "large_diff";
+}
+
+function categorizeItem(itemName: string | undefined): string {
+  if (!itemName) return "Overig";
+  const itemLower = itemName.toLowerCase();
+  
+  for (const [category, keywords] of Object.entries(REVENUE_CATEGORY_RULES)) {
+    for (const keyword of keywords) {
+      if (itemLower.includes(keyword.toLowerCase())) {
+        return category;
+      }
+    }
+  }
+  
+  return "Overig";
 }
 
 export async function registerRoutes(
@@ -115,6 +121,7 @@ export async function registerRoutes(
 
       const momenceByEmail = new Map<string, number>();
       const paymentMethodTotals = new Map<string, { count: number; total: number }>();
+      const categoryTotals = new Map<string, { count: number; total: number }>();
       let momenceTotalAll = 0;
       let nonStripeTotal = 0;
 
@@ -122,6 +129,7 @@ export async function registerRoutes(
         const paymentMethod = row["Payment method"] || "";
         const saleValue = parseNumber(row["Sale value"]);
         const customerEmail = normalizeEmail(row["Customer email"]);
+        const item = row.Item || "";
 
         const methodData = paymentMethodTotals.get(paymentMethod) || { count: 0, total: 0 };
         methodData.count++;
@@ -133,10 +141,18 @@ export async function registerRoutes(
           (m) => paymentMethod.toLowerCase().includes(m.toLowerCase())
         );
 
-        if (isStripeMethod && customerEmail) {
-          const current = momenceByEmail.get(customerEmail) || 0;
-          momenceByEmail.set(customerEmail, current + saleValue);
-        } else if (!isStripeMethod) {
+        if (isStripeMethod) {
+          if (customerEmail) {
+            const current = momenceByEmail.get(customerEmail) || 0;
+            momenceByEmail.set(customerEmail, current + saleValue);
+          }
+          
+          const category = categorizeItem(item);
+          const catData = categoryTotals.get(category) || { count: 0, total: 0 };
+          catData.count++;
+          catData.total += saleValue;
+          categoryTotals.set(category, catData);
+        } else {
           nonStripeTotal += saleValue;
         }
       }
@@ -146,14 +162,17 @@ export async function registerRoutes(
       let stripeTotalFees = 0;
 
       for (const row of stripeResult.data) {
-        if (row.Status?.toLowerCase() !== "paid") continue;
+        const reportingCategory = row.reporting_category?.toLowerCase() || "";
+        const status = row.Status?.toLowerCase() || "";
+        
+        const isCharge = reportingCategory === "charge" || status === "paid";
+        if (!isCharge) continue;
 
-        const email = normalizeEmail(row["Customer Email"]);
+        const email = normalizeEmail(row.customer_email || row["Customer Email"]);
         if (!email) continue;
 
-        const amount = parseNumber(row.Amount);
-        const feeInCents = parseNumber(row.Fee);
-        const fee = feeInCents / 100;
+        const amount = parseNumber(row.gross || row.Amount);
+        const fee = parseNumber(row.fee || row.Fee);
 
         stripeTotalAmount += amount;
         stripeTotalFees += fee;
@@ -249,6 +268,20 @@ export async function registerRoutes(
 
       await storage.addPaymentMethods(session.id, paymentMethods);
 
+      const categoryTotal = Array.from(categoryTotals.values()).reduce((a, b) => a + b.total, 0);
+      const sortedCategories = Array.from(categoryTotals.entries())
+        .sort((a, b) => b[1].total - a[1].total);
+
+      const categories = sortedCategories.map(([category, data]) => ({
+        sessionId: session.id,
+        category,
+        transactionCount: data.count,
+        totalAmount: data.total,
+        percentage: categoryTotal > 0 ? (data.total / categoryTotal) * 100 : 0,
+      }));
+
+      await storage.addCategories(session.id, categories);
+
       res.json({ success: true, sessionId: session.id });
     } catch (error) {
       console.error("Reconciliation error:", error);
@@ -287,7 +320,7 @@ export async function registerRoutes(
         return res.status(404).json({ error: "Sessie niet gevonden" });
       }
 
-      const { session, comparisons, paymentMethods } = result;
+      const { session, comparisons, paymentMethods, categories } = result;
 
       const workbook = new ExcelJS.Workbook();
       workbook.creator = "DNYS Reconciliatie Tool";
@@ -388,6 +421,24 @@ export async function registerRoutes(
           count: method.transactionCount,
           total: formatEuro(method.totalAmount),
           percentage: `${(method.percentage ?? 0).toFixed(1)}%`,
+        });
+      }
+
+      const categoriesSheet = workbook.addWorksheet("Omzet Categorieën");
+      categoriesSheet.columns = [
+        { header: "Categorie", key: "category", width: 25 },
+        { header: "Aantal", key: "count", width: 12 },
+        { header: "Totaal", key: "total", width: 18 },
+        { header: "Percentage", key: "percentage", width: 12 },
+      ];
+      categoriesSheet.getRow(1).font = { bold: true };
+
+      for (const cat of categories) {
+        categoriesSheet.addRow({
+          category: cat.category,
+          count: cat.transactionCount,
+          total: formatEuro(cat.totalAmount),
+          percentage: `${(cat.percentage ?? 0).toFixed(1)}%`,
         });
       }
 
