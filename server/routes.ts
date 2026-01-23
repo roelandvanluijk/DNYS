@@ -164,7 +164,10 @@ export async function registerRoutes(
         stripeByEmail.set(email, current);
       }
 
-      const allEmails = new Set([...momenceByEmail.keys(), ...stripeByEmail.keys()]);
+      const allEmails = Array.from(new Set([
+        ...Array.from(momenceByEmail.keys()), 
+        ...Array.from(stripeByEmail.keys())
+      ]));
       const comparisons: Array<{
         sessionId: string;
         customerEmail: string;
