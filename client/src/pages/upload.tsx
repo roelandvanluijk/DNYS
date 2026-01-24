@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { Upload, ArrowRight, Info, Loader2 } from "lucide-react";
+import dnysLogo from "@/assets/dnys-logo.svg";
 
 export default function UploadPage() {
   const [, navigate] = useLocation();
@@ -97,7 +98,7 @@ export default function UploadPage() {
         <div className="container mx-auto px-4 py-4 flex items-center justify-between gap-4">
           <div className="flex items-center gap-4">
             <img 
-              src="https://denieuweyogaschool.nl/wp-content/uploads/2024/05/DNYS_Main.svg" 
+              src={dnysLogo} 
               alt="De Nieuwe Yogaschool" 
               className="h-10 md:h-12"
               data-testid="img-logo"

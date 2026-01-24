@@ -21,6 +21,7 @@ import {
   Users
 } from "lucide-react";
 import type { ReconciliationResult, CustomerComparison, PaymentMethodSummary, CategorySummary } from "@shared/schema";
+import dnysLogo from "@/assets/dnys-logo.svg";
 
 function formatCurrency(value: number | null | undefined): string {
   const num = value ?? 0;
@@ -325,7 +326,7 @@ export default function ResultsPage() {
             </Button>
             <div className="flex items-center gap-4">
               <img 
-                src="https://denieuweyogaschool.nl/wp-content/uploads/2024/05/DNYS_Main.svg" 
+                src={dnysLogo} 
                 alt="De Nieuwe Yogaschool" 
                 className="h-10"
               />
