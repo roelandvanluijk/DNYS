@@ -1,3 +1,19 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 280 40">
-  <text x="0" y="26" font-family="Georgia, 'Times New Roman', serif" font-size="20" font-weight="600" fill="#8B7355" letter-spacing="0.5">De Nieuwe Yogaschool</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 80" fill="none">
+  <g stroke="#1a1a1a" stroke-width="0.8" stroke-linecap="round">
+    <line x1="60" y1="35" x2="60" y2="5"/>
+    <line x1="60" y1="35" x2="54" y2="6"/>
+    <line x1="60" y1="35" x2="48" y2="8"/>
+    <line x1="60" y1="35" x2="42" y2="11"/>
+    <line x1="60" y1="35" x2="37" y2="15"/>
+    <line x1="60" y1="35" x2="32" y2="20"/>
+    <line x1="60" y1="35" x2="28" y2="26"/>
+    <line x1="60" y1="35" x2="66" y2="6"/>
+    <line x1="60" y1="35" x2="72" y2="8"/>
+    <line x1="60" y1="35" x2="78" y2="11"/>
+    <line x1="60" y1="35" x2="83" y2="15"/>
+    <line x1="60" y1="35" x2="88" y2="20"/>
+    <line x1="60" y1="35" x2="92" y2="26"/>
+  </g>
+  <text x="60" y="50" font-family="Arial, sans-serif" font-size="9" fill="#1a1a1a" text-anchor="middle" letter-spacing="0.5">de_nieuwe</text>
+  <text x="60" y="62" font-family="Arial, sans-serif" font-size="9" fill="#1a1a1a" text-anchor="middle" letter-spacing="0.5">yogaschool</text>
 </svg>
