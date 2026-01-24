@@ -1,0 +1,810 @@
+# FINAL Replit Agent Prompt: Momence-Stripe Reconciliation Tool
+## De Nieuwe Yogaschool - Revenue Categorization & Reconciliation
+
+---
+
+## Project Overview
+
+Build a web application for **De Nieuwe Yogaschool** (Amsterdam yoga studio) to:
+1. **PRIMARY GOAL (80%)**: Automatically categorize revenue into 11 accounting categories
+2. **SECONDARY GOAL (20%)**: Verify Stripe payments match Momence totals
+
+**Budget:** €599 (8-10 hours development)
+**Client Website:** https://denieuweyogaschool.nl/
+
+---
+
+## Technical Stack
+
+- **Backend:** Python 3.11+ with Flask
+- **Frontend:** HTML5, Tailwind CSS (via CDN), Vanilla JavaScript
+- **Database:** SQLite3
+- **Libraries:** pandas, openpyxl
+
+---
+
+## Design & Branding
+
+### Client Brand Identity
+**Website:** https://denieuweyogaschool.nl/
+
+### Color Palette (from client website)
+```css
+:root {
+  /* Primary colors - warm, natural yoga aesthetic */
+  --primary-beige: #F5F1E8;      /* Light warm background */
+  --primary-brown: #8B7355;      /* Earthy brown for headers */
+  --accent-terracotta: #D4916C;  /* Warm accent for buttons/highlights */
+  --text-dark: #2C2C2C;          /* Almost black for text */
+  --text-muted: #6B6B6B;         /* Gray for secondary text */
+  
+  /* UI colors */
+  --success-green: #7FA650;      /* For matched items */
+  --warning-orange: #E8A87C;     /* For items needing review */
+  --error-red: #C85C5C;          /* For errors/discrepancies */
+  --border-light: #E0D5C7;       /* Subtle borders */
+  
+  /* Backgrounds */
+  --bg-white: #FFFFFF;
+  --bg-light: #FAF8F5;           /* Slightly off-white */
+  --bg-card: #F9F6F1;            /* Card backgrounds */
+}
+```
+
+### Typography
+- **Font:** System fonts (-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif)
+- **Headers:** font-weight: 600, color: var(--primary-brown)
+- **Body:** font-weight: 400, line-height: 1.6
+- **Style:** Clean, minimalist, spacious
+
+### Logo Integration
+**Logo URL:** https://denieuweyogaschool.nl/wp-content/uploads/2024/05/DNYS_Main.svg
+
+**Usage:**
+```html
+<!-- In header -->
+<header class="bg-white border-b border-gray-200">
+    <div class="container mx-auto px-4 py-4">
+        <div class="flex items-center space-x-4">
+            <img src="https://denieuweyogaschool.nl/wp-content/uploads/2024/05/DNYS_Main.svg" 
+                 alt="De Nieuwe Yogaschool" 
+                 class="h-12">
+            <div class="border-l border-gray-300 pl-4">
+                <h1 class="text-xl font-semibold" style="color: var(--primary-brown);">
+                    Reconciliatie Tool
+                </h1>
+            </div>
+        </div>
+    </div>
+</header>
+```
+
+### UI Design Principles
+1. **Minimalist & Clean** - Lots of white space, no clutter
+2. **Warm & Inviting** - Earth tones, rounded corners (8px)
+3. **Clear Hierarchy** - Strong typography contrast
+4. **Mobile-First** - Responsive design
+5. **Professional** - Suitable for accounting work
+
+---
+
+## Data Structure (CRITICAL - READ CAREFULLY)
+
+### Momence CSV Structure
+**Columns:**
+- Category, Item, Date, Sale value, Tax, Refunded, Payment method, Payment status, Sale reference, Sold by, Paying Customer email, Paying Customer name, Customer email, Customer name, Location, Note
+
+**Key fields:**
+- `Customer email` (for matching)
+- `Sale value` (amount in EUR)
+- `Tax` (BTW in EUR)
+- `Payment method` (see below)
+- `Item` (for categorization)
+
+**Payment methods that go through Stripe:**
+- Card
+- iDEAL
+- SEPA Direct Debit
+- Card reader
+
+**Payment methods that DON'T go through Stripe:**
+- Class Pass
+- urban-sports-club
+- Gift card
+
+### Stripe CSV Structure (DIFFERENT THAN EXPECTED!)
+**File name:** Itemized_payout_reconciliation_EUR_[dates]_UTC.csv
+
+**CRITICAL - Column names are DIFFERENT:**
+- `customer_email` (NOT "Customer Email")
+- `gross` (NOT "Amount")
+- `fee` (NOT "Fee")
+- `net` (already calculated)
+- `reporting_category` (NOT "Status")
+
+**CRITICAL - Fee handling:**
+- Fees are ALREADY in euros (e.g., 0.35 = €0.35)
+- **DO NOT divide by 100**
+- Net is already calculated: `net = gross - fee`
+
+**Filter criteria:**
+- Use `reporting_category == 'charge'` (NOT Status == 'Paid')
+
+### Example Data Comparison
+
+**Momence row:**
+```
+"Class","Yin Yoga","2025-12-31, 10:13 PM","18.00","1.49","0.00","iDEAL","Succeeded","236896652","","test@example.com","John Doe","test@example.com","John Doe","Studio",""
+```
+
+**Stripe row:**
+```
+"po_123","2025-12-31 22:13:15",...,"eur","18.00","0.53","17.47","charge","py_123",...,"test@example.com","John Doe",...
+```
+
+**Match:**
+- Customer: test@example.com (normalize to lowercase)
+- Momence total: €18.00
+- Stripe gross: €18.00
+- Stripe fee: €0.53 (ALREADY in euros, not cents!)
+- Stripe net: €17.47
+
+---
+
+## Revenue Categorization (PRIMARY FEATURE)
+
+### 11 Revenue Categories
+
+#### Yoga & Studio Services (7 categories)
+
+**1. Abonnementen** (Memberships)
+- BTW: 9%
+- Twinfield: 8100
+- Keywords: membership, unlimited, abonnement, lidmaatschap, doorlopend
+
+**2. Rittenkaarten** (Class Cards)
+- BTW: 9%
+- Twinfield: 8110
+- Keywords: class card, rittenkaart, lessenkaart, intro, pack, kaart
+
+**3. Single Classes** (Drop-in)
+- BTW: 9%
+- Twinfield: 8120
+- Keywords: single class, yoga, pilates, flow, yin, vinyasa, ashtanga, hatha, restorative, breathwork, meditation, sound, €15, €16, €17, €18
+
+**4. Workshops & Events**
+- BTW: 9%
+- Twinfield: 8150
+- Keywords: workshop, ceremony, cacao, tantra, truffle, retreat, circle, event, face yoga
+
+**5. Opleidingen** (Teacher Trainings)
+- BTW: 21% ⚠️ DIFFERENT RATE
+- Twinfield: 8300
+- Keywords: opleiding, teacher training, 200 uur, ademcoach, yogatherapie, meditatie tot zelfrealisatie, schoolverlichting, facilitator, certification
+
+**6. Online/Livestream**
+- BTW: 9%
+- Twinfield: 8200
+- Keywords: livestream, online, virtual
+
+**7. Gift Cards & Credits**
+- BTW: 0%
+- Twinfield: 8900
+- Keywords: gift card, money credit, tegoed, voucher
+
+#### Horeca / Café (3 categories)
+
+**8. Omzet Keuken** (Food)
+- BTW: 9%
+- Twinfield: 8001
+- Keywords: bananenbrood, banana bread, quiche, soep, soup, bliss ball, brownie, snickers, combideal, meal
+
+**9. Omzet Drank Laag** (Non-alcoholic drinks)
+- BTW: 9%
+- Twinfield: 8002
+- Keywords: coffee, cappuccino, latte, espresso, flat white, cortado, macchiato, americano, chai, matcha, tea, thee, smoothie, kombucha, lemonaid, charitea, kokoswater, water, ijsthee, juice, cacaoccino, cacao shot, cashew melk
+
+**10. Omzet Drank Hoog** (Alcoholic drinks)
+- BTW: 21%
+- Twinfield: 8003
+- Keywords: beer, wine, alcohol, bier, wijn
+- Note: Currently €0 (yoga studio, no alcohol)
+
+**11. Overig** (Other)
+- BTW: varies
+- Twinfield: 8999
+- Catch-all for anything not matched
+
+### Categorization Logic (PRIORITY ORDER)
+
+```python
+def categorize_item(item_name):
+    """Smart categorization with priority order"""
+    item_lower = item_name.lower()
+    
+    # Priority 1: Opleidingen (most specific, different BTW)
+    if any(word in item_lower for word in [
+        'opleiding', 'teacher training', '200 uur', 'ademcoach',
+        'yogatherapie', 'meditatie tot zelfrealisatie', 'schoolverlichting',
+        'facilitator', 'certification'
+    ]):
+        return ('Opleidingen', 0.21, '8300')
+    
+    # Priority 2: Online/Livestream
+    if any(word in item_lower for word in ['livestream', 'online']):
+        return ('Online/Livestream', 0.09, '8200')
+    
+    # Priority 3: Gift Cards
+    if any(word in item_lower for word in ['gift card', 'money credit', 'tegoed']):
+        return ('Gift Cards & Credits', 0.00, '8900')
+    
+    # Priority 4: Workshops (before single classes)
+    if any(word in item_lower for word in [
+        'workshop', 'ceremony', 'cacao', 'tantra', 'truffle',
+        'retreat', 'circle', 'event', 'face yoga'
+    ]):
+        return ('Workshops & Events', 0.09, '8150')
+    
+    # Priority 5: Memberships
+    if any(word in item_lower for word in [
+        'membership', 'unlimited', 'abonnement', 'lidmaatschap', 'doorlopend'
+    ]):
+        return ('Abonnementen', 0.09, '8100')
+    
+    # Priority 6: Class Cards
+    if any(word in item_lower for word in [
+        'class card', 'rittenkaart', 'lessenkaart', 'intro', 'kaart'
+    ]) and 'single' not in item_lower:
+        return ('Rittenkaarten', 0.09, '8110')
+    
+    # Priority 7: Food
+    if any(word in item_lower for word in [
+        'bananenbrood', 'banana bread', 'quiche', 'soep', 'soup',
+        'bliss ball', 'brownie', 'snickers', 'combideal', 'meal'
+    ]):
+        return ('Omzet Keuken', 0.09, '8001')
+    
+    # Priority 8: Drinks (non-alcoholic)
+    if any(word in item_lower for word in [
+        'coffee', 'cappuccino', 'latte', 'espresso', 'flat white',
+        'cortado', 'macchiato', 'americano', 'chai', 'matcha',
+        'tea', 'thee', 'smoothie', 'kombucha', 'lemonaid', 'charitea',
+        'kokoswater', 'water', 'ijsthee', 'juice', 'cacaoccino',
+        'cacao shot', 'cashew melk'
+    ]):
+        return ('Omzet Drank Laag', 0.09, '8002')
+    
+    # Priority 9: Alcohol (unlikely)
+    if any(word in item_lower for word in [
+        'beer', 'wine', 'alcohol', 'bier', 'wijn'
+    ]):
+        return ('Omzet Drank Hoog', 0.21, '8003')
+    
+    # Priority 10: Single Classes (catch-all for yoga)
+    if any(word in item_lower for word in [
+        'single class', 'yoga', 'pilates', 'flow', 'yin', 'vinyasa',
+        'ashtanga', 'hatha', 'restorative', 'breathwork', 'meditation',
+        'sound', '€15', '€16', '€17', '€18'
+    ]):
+        return ('Single Classes', 0.09, '8120')
+    
+    # Default: Overig
+    return ('Overig', 0.09, '8999')
+```
+
+---
+
+## Database Schema
+
+```sql
+CREATE TABLE IF NOT EXISTS reconciliation_sessions (
+    id TEXT PRIMARY KEY,
+    period TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    momence_total REAL,
+    stripe_total REAL,
+    stripe_fees REAL,
+    stripe_net REAL,
+    matched_count INTEGER,
+    unmatched_count INTEGER,
+    status TEXT DEFAULT 'completed'
+);
+
+CREATE TABLE IF NOT EXISTS momence_transactions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT,
+    sale_reference TEXT,
+    category TEXT,
+    item TEXT,
+    date TEXT,
+    sale_value REAL,
+    tax REAL,
+    payment_method TEXT,
+    customer_email TEXT,
+    revenue_category TEXT,
+    btw_rate REAL,
+    twinfield_account TEXT,
+    FOREIGN KEY (session_id) REFERENCES reconciliation_sessions(id)
+);
+
+CREATE TABLE IF NOT EXISTS stripe_transactions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT,
+    charge_id TEXT,
+    gross REAL,
+    fee REAL,
+    net REAL,
+    created_date TEXT,
+    customer_email TEXT,
+    reporting_category TEXT,
+    FOREIGN KEY (session_id) REFERENCES reconciliation_sessions(id)
+);
+
+CREATE TABLE IF NOT EXISTS customer_comparison (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT,
+    customer_email TEXT,
+    momence_total REAL,
+    stripe_gross REAL,
+    stripe_fee REAL,
+    stripe_net REAL,
+    difference REAL,
+    match_status TEXT,
+    FOREIGN KEY (session_id) REFERENCES reconciliation_sessions(id)
+);
+
+CREATE TABLE IF NOT EXISTS category_summary (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT,
+    category TEXT,
+    transaction_count INTEGER,
+    total_amount REAL,
+    total_tax REAL,
+    btw_rate REAL,
+    twinfield_account TEXT,
+    percentage REAL,
+    FOREIGN KEY (session_id) REFERENCES reconciliation_sessions(id)
+);
+
+CREATE TABLE IF NOT EXISTS payment_method_summary (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT,
+    payment_method TEXT,
+    transaction_count INTEGER,
+    total_amount REAL,
+    percentage REAL,
+    goes_through_stripe BOOLEAN,
+    FOREIGN KEY (session_id) REFERENCES reconciliation_sessions(id)
+);
+```
+
+---
+
+## Core Reconciliation Logic
+
+### Step 1: Filter Stripe Payment Methods
+```python
+# Only these go through Stripe
+stripe_methods = ['Card', 'iDEAL', 'SEPA Direct Debit', 'Card reader']
+momence_stripe_only = momence_df[momence_df['Payment method'].isin(stripe_methods)]
+```
+
+### Step 2: Aggregate by Customer
+```python
+# Momence aggregation
+momence_df['customer_email'] = momence_df['Customer email'].str.lower().str.strip()
+momence_agg = momence_df.groupby('customer_email').agg({
+    'Sale value': 'sum'
+}).reset_index()
+
+# Stripe aggregation
+stripe_df['customer_email'] = stripe_df['customer_email'].str.lower().str.strip()
+stripe_charges = stripe_df[stripe_df['reporting_category'] == 'charge'].copy()
+
+# CRITICAL: Fees are ALREADY in euros - do NOT divide by 100
+stripe_agg = stripe_charges.groupby('customer_email').agg({
+    'gross': 'sum',
+    'fee': 'sum',  # Already in EUR
+    'net': 'sum'
+}).reset_index()
+```
+
+### Step 3: Compare Totals
+```python
+comparison = momence_agg.merge(
+    stripe_agg,
+    on='customer_email',
+    how='outer',
+    indicator=True
+)
+
+comparison['difference'] = (
+    comparison['Sale value'].fillna(0) - 
+    comparison['gross'].fillna(0)
+)
+
+# Categorize matches
+def categorize_match(diff):
+    if abs(diff) < 1:
+        return 'match'
+    elif abs(diff) < 5:
+        return 'small_diff'
+    else:
+        return 'large_diff'
+
+comparison['match_status'] = comparison['difference'].apply(categorize_match)
+```
+
+---
+
+## User Interface
+
+### Page 1: Upload (/)
+
+**Layout:**
+```
+┌────────────────────────────────────────────────┐
+│ [DNYS Logo] | Reconciliatie Tool                │
+├────────────────────────────────────────────────┤
+│                                                │
+│  Momence-Stripe Reconciliatie                 │
+│  Automatische omzetcategorisatie              │
+│                                                │
+│  ┌──────────────────────────────────┐         │
+│  │ Periode: [2025-01____]           │         │
+│  │                                  │         │
+│  │ Momence CSV                      │         │
+│  │ ┌────────────────────────┐       │         │
+│  │ │  📁 Upload zone         │       │         │
+│  │ │  Sleep bestand hier     │       │         │
+│  │ │  of klik om te kiezen   │       │         │
+│  │ └────────────────────────┘       │         │
+│  │  [bestand.csv]                   │         │
+│  │                                  │         │
+│  │ Stripe CSV                       │         │
+│  │ ┌────────────────────────┐       │         │
+│  │ │  📁 Upload zone         │       │         │
+│  │ │  Sleep bestand hier     │       │         │
+│  │ │  of klik om te kiezen   │       │         │
+│  │ └────────────────────────┘       │         │
+│  │  [bestand.csv]                   │         │
+│  │                                  │         │
+│  │  [Start Verwerking]              │         │
+│  └──────────────────────────────────┘         │
+│                                                │
+│  📋 Instructies:                               │
+│  1. Momence: Analytics > Total Sales > CSV    │
+│  2. Stripe: Payments > Itemized payout > CSV  │
+│  3. Upload beide bestanden                    │
+│                                                │
+└────────────────────────────────────────────────┘
+```
+
+### Page 2: Results (/results/<session_id>)
+
+**PRIMARY VIEW: Revenue Categories**
+```
+┌──────────────────────────────────────────────────────────────┐
+│ [DNYS Logo] | Reconciliatie Tool    [Download Excel]         │
+│ Periode: December 2025                                       │
+├──────────────────────────────────────────────────────────────┤
+│                                                              │
+│ ══════════════ OMZET CATEGORIEËN ══════════════             │
+│                                                              │
+│ YOGA & STUDIO SERVICES                                       │
+│ ┌────────────────────────────────────────────────────────┐  │
+│ │Cat│Categorie        │Aantal│Bedrag    │% │BTW│Tw.│Bar││  │
+│ ├───┼─────────────────┼──────┼──────────┼──┼───┼───┼───┤│  │
+│ │ 1 │Abonnementen     │  453 │€24,174.50│20│ 9%│810│███││  │
+│ │ 2 │Rittenkaarten    │  234 │€18,450.00│15│ 9%│811│███││  │
+│ │ 3 │Single Classes   │1,205 │€28,200.00│23│ 9%│812│███││  │
+│ │ 4 │Workshops        │   89 │€12,900.00│11│ 9%│815│██ ││  │
+│ │ 5 │Opleidingen      │   12 │€30,378.00│25│21%│830│███││  │
+│ │ 6 │Online/Livestrm  │  178 │€ 3,200.00│ 3│ 9%│820│█  ││  │
+│ │ 7 │Gift Cards       │   15 │€   357.00│ 0│ 0%│890│   ││  │
+│ └───┴─────────────────┴──────┴──────────┴──┴───┴───┴───┘│  │
+│                           Subtotaal: €117,659.50 (97%)      │
+│                                                              │
+│ HORECA / CAFÉ                                                │
+│ ┌────────────────────────────────────────────────────────┐  │
+│ │ 8 │Omzet Keuken     │  456 │€ 2,345.00│ 2│ 9%│800│█  ││  │
+│ │ 9 │Omzet Drank Laag │  892 │€ 5,234.00│ 4│ 9%│800│█  ││  │
+│ │10 │Omzet Drank Hoog │    0 │€     0.00│ 0│21%│800│   ││  │
+│ │11 │Overig           │    8 │€   150.00│ 0│ 9%│899│   ││  │
+│ └───┴─────────────────┴──────┴──────────┴──┴───┴───┴───┘│  │
+│                            Subtotaal: € 7,729.00 (6%)       │
+│                                                              │
+│ ═══════════════════════════════════════════════════════════ │
+│ TOTAAL OMZET                       €125,388.50 (100%)       │
+│                                                              │
+│ BTW Overzicht:                                               │
+│ • 9% BTW:          € 9,452.34                               │
+│ • 21% BTW:         € 6,379.38                               │
+│ • Totaal BTW:      €15,831.72                               │
+│                                                              │
+└──────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────┐
+│ ══════════════ STRIPE CONTROLE ══════════════                │
+│                                                              │
+│ ┌──────────────┬──────────────┬──────────────┬────────────┐ │
+│ │ Omschrijving │     Bedrag   │              │   Status   │ │
+│ ├──────────────┼──────────────┼──────────────┼────────────┤ │
+│ │ Momence      │ €125,388.50  │              │            │ │
+│ │ Stripe Gross │ €125,388.50  │              │            │ │
+│ │ Verschil     │ €      0.00  │              │ ✅ Match   │ │
+│ │              │              │              │            │ │
+│ │ Stripe Fees  │ € (3,134.71) │              │            │ │
+│ │ Stripe Net   │ €122,253.79  │ ← To client  │            │ │
+│ └──────────────┴──────────────┴──────────────┴────────────┘ │
+│                                                              │
+│ Klanten: 1,234 gematcht, 12 verschillen                     │
+│                                                              │
+└──────────────────────────────────────────────────────────────┘
+```
+
+**SECONDARY VIEW: Details (collapsible)**
+```
+┌──────────────────────────────────────────────────────────────┐
+│ ▼ PAYMENT METHOD BREAKDOWN                                   │
+│ ┌────────────────────────────────────────────────────────┐  │
+│ │Method           │Count│Amount      │%   │Stripe?│Bar  ││  │
+│ ├─────────────────┼─────┼────────────┼────┼───────┼─────┤│  │
+│ │iDEAL            │2,450│€82,608.74  │44% │  ✓    │█████││  │
+│ │Card             │1,234│€46,743.49  │25% │  ✓    │███  ││  │
+│ │Card reader      │  567│€13,096.72  │ 7% │  ✓    │█    ││  │
+│ │SEPA             │  345│€18,258.20  │10% │  ✓    │██   ││  │
+│ │Class Pass       │  432│€11,962.50  │ 6% │  ✗    │█    ││  │
+│ │Urban Sports Club│  289│€12,150.00  │ 6% │  ✗    │█    ││  │
+│ └─────────────────┴─────┴────────────┴────┴───────┴─────┘│  │
+└──────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────┐
+│ ▼ KLANT VERGELIJKING                                         │
+│   [Alles] [Gematcht] [Verschillen]                           │
+│ ┌────────────────────────────────────────────────────────┐  │
+│ │Email              │Momence │Stripe  │Verschil│Status  ││  │
+│ ├───────────────────┼────────┼────────┼────────┼────────┤│  │
+│ │customer@mail.com  │€875.00 │€875.00 │€0.00   │✓ Match ││  │
+│ │other@mail.com     │€65.00  │€64.50  │€0.50   │⚠ Diff  ││  │
+│ └───────────────────┴────────┴────────┴────────┴────────┘│  │
+└──────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Excel Export Structure
+
+Generate Excel file with 5 sheets:
+
+### Sheet 1: Omzet Categorieën (PRIMARY)
+```
+De Nieuwe Yogaschool - Omzet Overzicht
+Periode: December 2025
+Gegenereerd: 24-01-2026 14:30
+
+YOGA & STUDIO SERVICES
+| Categorie         | Aantal | Bedrag      | % van Totaal | BTW% | BTW Bedrag | Twinfield |
+|-------------------|--------|-------------|--------------|------|------------|-----------|
+| Abonnementen      | 453    | €24,174.50  | 20%          | 9%   | €2,175.81  | 8100      |
+| Rittenkaarten     | 234    | €18,450.00  | 15%          | 9%   | €1,660.50  | 8110      |
+| Single Classes    | 1,205  | €28,200.00  | 23%          | 9%   | €2,538.00  | 8120      |
+| Workshops         | 89     | €12,900.00  | 11%          | 9%   | €1,161.00  | 8150      |
+| Opleidingen       | 12     | €30,378.00  | 25%          | 21%  | €6,379.38  | 8300      |
+| Online/Livestream | 178    | € 3,200.00  | 3%           | 9%   | €  288.00  | 8200      |
+| Gift Cards        | 15     | €   357.00  | 0%           | 0%   | €    0.00  | 8900      |
+|                   |        | €117,659.50 | 97%          |      | €14,202.69 |           |
+
+HORECA / CAFÉ
+| Categorie         | Aantal | Bedrag      | % van Totaal | BTW% | BTW Bedrag | Twinfield |
+|-------------------|--------|-------------|--------------|------|------------|-----------|
+| Omzet Keuken      | 456    | € 2,345.00  | 2%           | 9%   | €  211.05  | 8001      |
+| Omzet Drank Laag  | 892    | € 5,234.00  | 4%           | 9%   | €  471.06  | 8002      |
+| Omzet Drank Hoog  | 0      | €     0.00  | 0%           | 21%  | €    0.00  | 8003      |
+| Overig            | 8      | €   150.00  | 0%           | 9%   | €   13.50  | 8999      |
+|                   |        | € 7,729.00  | 6%           |      | €  695.61  |           |
+
+TOTAAL            | 3,542  | €125,388.50 | 100%         |      | €14,898.30 |           |
+
+BTW SAMENVATTING
+9% BTW:    € 8,518.92
+21% BTW:   € 6,379.38
+Totaal:    €14,898.30
+```
+
+**Formatting:**
+- Headers: Bold, background #8B7355 (brown), white text
+- Subtotal rows: Light gray background, bold
+- Total row: Dark background, bold, larger font
+- Numbers: Right-aligned, currency format €1.234,56
+- Percentages: 1 decimal place
+
+### Sheet 2: Stripe Controle
+```
+| Omschrijving              | Bedrag       |
+|---------------------------|--------------|
+| Momence Totaal (Stripe)   | €125,388.50  |
+| Stripe Gross              | €125,388.50  |
+| Verschil                  | €      0.00  | ✅
+|                           |              |
+| Stripe Fees               | € (3,134.71) |
+| Stripe Net (ontvangen)    | €122,253.79  |
+|                           |              |
+| Klanten Gematcht          | 1,234        |
+| Klanten met Verschillen   | 12           |
+```
+
+### Sheet 3: Payment Methods
+```
+| Payment Method    | Aantal | Bedrag      | % van Totaal | Via Stripe |
+|-------------------|--------|-------------|--------------|------------|
+| iDEAL             | 2,450  | €82,608.74  | 44.3%        | Ja         |
+| Card              | 1,234  | €46,743.49  | 25.0%        | Ja         |
+...
+```
+
+### Sheet 4: Klant Vergelijking (alleen verschillen)
+```
+| Klant Email       | Momence  | Stripe   | Verschil | Status      |
+|-------------------|----------|----------|----------|-------------|
+| customer@mail.com | €65.00   | €64.50   | €0.50    | Small Diff  |
+...
+```
+
+### Sheet 5: Alle Klanten
+```
+Full customer comparison table
+```
+
+---
+
+## File Structure
+
+```
+/
+├── main.py               # Flask app
+├── reconcile.py          # Reconciliation logic
+├── database.py           # SQLite operations
+├── templates/
+│   ├── base.html        # Base with DNYS logo
+│   ├── upload.html      # Upload page
+│   ├── results.html     # Results page
+│   └── sessions.html    # Sessions list
+├── static/
+│   └── js/
+│       └── app.js       # Frontend JavaScript
+└── data/
+    └── reconciliation.db # SQLite (auto-created)
+```
+
+---
+
+## Critical Implementation Notes
+
+### 1. Stripe CSV Handling (MOST IMPORTANT)
+```python
+# CORRECT column names
+stripe_df = pd.read_csv(stripe_file)
+columns_needed = ['customer_email', 'gross', 'fee', 'net', 'reporting_category']
+
+# CORRECT filtering
+stripe_charges = stripe_df[stripe_df['reporting_category'] == 'charge'].copy()
+
+# CORRECT fee handling - NO division by 100
+# Fees are ALREADY in euros
+stripe_agg = stripe_charges.groupby('customer_email').agg({
+    'gross': 'sum',
+    'fee': 'sum',  # Already in EUR, e.g., 0.53 = €0.53
+    'net': 'sum'
+}).reset_index()
+```
+
+### 2. Email Normalization
+```python
+# Both systems
+df['customer_email'] = df['customer_email'].str.lower().str.strip()
+```
+
+### 3. Category Priority
+- Check Opleidingen FIRST (21% BTW, most specific)
+- Check specific categories before general ones
+- Single Classes is catch-all for yoga items
+
+### 4. UI Components
+```css
+/* Button */
+.btn-primary {
+  background-color: #D4916C;
+  color: white;
+  padding: 12px 24px;
+  border-radius: 8px;
+  font-weight: 500;
+  transition: all 0.3s ease;
+}
+
+.btn-primary:hover {
+  background-color: #8B7355;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+}
+
+/* Card */
+.card {
+  background: white;
+  border-radius: 12px;
+  padding: 24px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+}
+
+/* Status badges */
+.status-match {
+  background-color: #7FA650;
+  color: white;
+  padding: 4px 12px;
+  border-radius: 6px;
+}
+
+.status-diff {
+  background-color: #E8A87C;
+  color: white;
+  padding: 4px 12px;
+  border-radius: 6px;
+}
+```
+
+---
+
+## Testing Expectations
+
+With the provided test data:
+- **Momence:** 6,128 transactions (December 2025)
+- **Stripe:** 3,209 transactions
+- **Expected matches:** ~1,200-1,300 customers
+- **Expected categories:** All 11 populated except "Drank Hoog" (€0)
+- **Expected Stripe fees:** ~€3,000-3,500 (average 2.5%)
+
+**Success criteria:**
+- ✅ 95%+ auto-categorized correctly
+- ✅ Stripe totals match Momence (within €10)
+- ✅ All 11 categories show in output
+- ✅ Excel exports correctly
+- ✅ Logo displays properly
+- ✅ Mobile responsive
+
+---
+
+## Dutch Language Text
+
+All UI text in Dutch:
+- "Start Verwerking" (not "Start Reconciliation")
+- "Omzet Categorieën" (not "Revenue Categories")
+- "Verschil" (not "Difference")
+- "Gematcht" (not "Matched")
+- Numbers: €1.234,56 (European format)
+
+---
+
+## Priority Checklist
+
+**Must Have (Core €599 scope):**
+1. ✅ Revenue categorization into 11 categories
+2. ✅ Simple Stripe total verification
+3. ✅ Excel export with 5 sheets
+4. ✅ DNYS logo in header
+5. ✅ Clean UI matching client website
+6. ✅ Correct Stripe column handling
+7. ✅ Correct fee calculation (no divide by 100)
+
+**Nice to Have (if time allows):**
+1. Session history
+2. Category drill-down (click to see items)
+3. Export individual category to CSV
+4. Dark mode toggle
+
+---
+
+Build this application now with all features described above. Focus on:
+1. Revenue categorization as PRIMARY feature (prominent display)
+2. Stripe reconciliation as SECONDARY verification
+3. Professional appearance matching DNYS brand
+4. Correct data handling (Stripe columns, fees, etc.)
