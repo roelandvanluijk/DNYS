@@ -127,7 +127,7 @@ export default function SessionsPage() {
 
   return (
     <div className="min-h-screen flex flex-col">
-      <header className="border-b bg-card/50 backdrop-blur-sm sticky top-0 z-10">
+      <header className="border-b bg-white sticky top-0 z-10">
         <div className="container mx-auto px-4 py-4 flex items-center gap-3">
           <Button 
             variant="ghost" 
@@ -137,12 +137,14 @@ export default function SessionsPage() {
           >
             <ArrowLeft className="w-4 h-4" />
           </Button>
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
-              <FileSpreadsheet className="w-5 h-5 text-primary" />
-            </div>
-            <div>
-              <h1 className="font-semibold text-lg">Eerdere Reconciliaties</h1>
+          <div className="flex items-center gap-4">
+            <img 
+              src="https://denieuweyogaschool.nl/wp-content/uploads/2024/05/DNYS_Main.svg" 
+              alt="De Nieuwe Yogaschool" 
+              className="h-10"
+            />
+            <div className="border-l border-border pl-4">
+              <h1 className="font-semibold" style={{ color: '#8B7355' }}>Eerdere Sessies</h1>
               <p className="text-xs text-muted-foreground">Bekijk en download vorige sessies</p>
             </div>
           </div>

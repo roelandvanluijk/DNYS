@@ -9,6 +9,7 @@ export const reconciliationSessions = pgTable("reconciliation_sessions", {
   momenceTotal: real("momence_total").default(0),
   stripeTotal: real("stripe_total").default(0),
   stripeFees: real("stripe_fees").default(0),
+  stripeNet: real("stripe_net").default(0),
   nonStripeTotal: real("non_stripe_total").default(0),
   matchedCount: integer("matched_count").default(0),
   unmatchedCount: integer("unmatched_count").default(0),
@@ -27,6 +28,9 @@ export const momenceTransactions = pgTable("momence_transactions", {
   paymentMethod: text("payment_method"),
   customerEmail: text("customer_email"),
   customerName: text("customer_name"),
+  revenueCategory: text("revenue_category"),
+  btwRate: real("btw_rate").default(0),
+  twinfieldAccount: text("twinfield_account"),
 });
 
 export const stripeTransactions = pgTable("stripe_transactions", {
@@ -35,9 +39,10 @@ export const stripeTransactions = pgTable("stripe_transactions", {
   chargeId: text("charge_id"),
   amount: real("amount").default(0),
   fee: real("fee").default(0),
+  net: real("net").default(0),
   createdDate: text("created_date"),
   customerEmail: text("customer_email"),
-  status: text("status"),
+  reportingCategory: text("reporting_category"),
 });
 
 export const customerComparison = pgTable("customer_comparison", {
@@ -59,6 +64,7 @@ export const paymentMethodSummary = pgTable("payment_method_summary", {
   transactionCount: integer("transaction_count").default(0),
   totalAmount: real("total_amount").default(0),
   percentage: real("percentage").default(0),
+  goesThruStripe: integer("goes_thru_stripe").default(0),
 });
 
 export const categorySummary = pgTable("category_summary", {
@@ -67,6 +73,9 @@ export const categorySummary = pgTable("category_summary", {
   category: text("category").notNull(),
   transactionCount: integer("transaction_count").default(0),
   totalAmount: real("total_amount").default(0),
+  totalTax: real("total_tax").default(0),
+  btwRate: real("btw_rate").default(0),
+  twinfieldAccount: text("twinfield_account"),
   percentage: real("percentage").default(0),
 });
 
@@ -101,47 +110,103 @@ export const NON_STRIPE_PAYMENT_METHODS = ["Class Pass", "urban-sports-club", "G
 
 export type MatchStatus = "match" | "small_diff" | "large_diff" | "only_in_momence" | "only_in_stripe";
 
-export const REVENUE_CATEGORY_RULES: Record<string, string[]> = {
-  'Abonnementen': [
-    'membership', 'unlimited', 'abonnement', 'lidmaatschap',
-    'monthly membership', 'yearly membership', 'year membership'
-  ],
-  'Rittenkaarten': [
-    'class card', 'lessenkaart', 'rittenkaart', 'pack'
-  ],
-  'Single Classes': [
-    'single class', 'losse les', '€15', '€16', '€17', '€18',
-    'drop in', 'drop-in'
-  ],
-  'Workshops & Events': [
-    'workshop', 'ceremony', 'event', 'retreat', 'circle',
-    'tantra', 'cacao', 'truffle', 'breathwork', 'sound'
-  ],
-  'Trainings & Opleidingen': [
-    'training', 'opleiding', 'teacher', 'coach', 'facilitator',
-    'certification', '200 uur', 'schoolverlichting'
-  ],
-  'Online': [
-    'livestream', 'online', 'virtual'
-  ],
-  'Horeca - Koffie': [
-    'coffee', 'cappuccino', 'latte', 'espresso', 'macchiato',
-    'flat white', 'cortado', 'americano'
-  ],
-  'Horeca - Thee & Dranken': [
-    'tea', 'chai', 'matcha', 'smoothie', 'juice', 'kombucha',
-    'lemonade', 'water'
-  ],
-  'Horeca - Food': [
-    'brownie', 'banana bread', 'bananenbrood', 'bliss ball',
-    'snack', 'soep', 'soup', 'quiche', 'salad'
-  ],
-  'Gift Cards': [
-    'gift card', 'cadeaukaart', 'voucher'
-  ],
-  'Money Credits': [
-    'money credit', 'credit', 'tegoed'
-  ]
+export interface CategoryConfig {
+  keywords: string[];
+  btwRate: number;
+  twinfieldAccount: string;
+  group: "yoga" | "horeca";
+}
+
+export const REVENUE_CATEGORIES: Record<string, CategoryConfig> = {
+  'Opleidingen': {
+    keywords: [
+      'opleiding', 'teacher training', '200 uur', 'ademcoach',
+      'yogatherapie', 'meditatie tot zelfrealisatie', 'schoolverlichting',
+      'facilitator', 'certification', '300 uur', 'yin yoga training'
+    ],
+    btwRate: 0.21,
+    twinfieldAccount: '8300',
+    group: 'yoga',
+  },
+  'Online/Livestream': {
+    keywords: ['livestream', 'online', 'virtual'],
+    btwRate: 0.09,
+    twinfieldAccount: '8200',
+    group: 'yoga',
+  },
+  'Gift Cards & Credits': {
+    keywords: ['gift card', 'money credit', 'tegoed', 'voucher', 'cadeaukaart'],
+    btwRate: 0.00,
+    twinfieldAccount: '8900',
+    group: 'yoga',
+  },
+  'Workshops & Events': {
+    keywords: [
+      'workshop', 'ceremony', 'cacao', 'tantra', 'truffle',
+      'retreat', 'circle', 'event', 'face yoga', 'new year',
+      'sound bath', 'gong', 'kirtan'
+    ],
+    btwRate: 0.09,
+    twinfieldAccount: '8150',
+    group: 'yoga',
+  },
+  'Abonnementen': {
+    keywords: [
+      'membership', 'unlimited', 'abonnement', 'lidmaatschap', 'doorlopend',
+      'monthly', 'maandelijks', 'yearly', 'jaarlijks'
+    ],
+    btwRate: 0.09,
+    twinfieldAccount: '8100',
+    group: 'yoga',
+  },
+  'Rittenkaarten': {
+    keywords: [
+      'class card', 'rittenkaart', 'lessenkaart', 'intro', 'kaart',
+      'pack', '5 class', '10 class', '20 class', 'ritten'
+    ],
+    btwRate: 0.09,
+    twinfieldAccount: '8110',
+    group: 'yoga',
+  },
+  'Omzet Keuken': {
+    keywords: [
+      'bananenbrood', 'banana bread', 'quiche', 'soep', 'soup',
+      'bliss ball', 'brownie', 'snickers', 'combideal', 'meal',
+      'snack', 'food', 'eten'
+    ],
+    btwRate: 0.09,
+    twinfieldAccount: '8001',
+    group: 'horeca',
+  },
+  'Omzet Drank Laag': {
+    keywords: [
+      'coffee', 'cappuccino', 'latte', 'espresso', 'flat white',
+      'cortado', 'macchiato', 'americano', 'chai', 'matcha',
+      'tea', 'thee', 'smoothie', 'kombucha', 'lemonaid', 'charitea',
+      'kokoswater', 'water', 'ijsthee', 'juice', 'cacaoccino',
+      'cacao shot', 'cashew melk', 'koffie', 'drank'
+    ],
+    btwRate: 0.09,
+    twinfieldAccount: '8002',
+    group: 'horeca',
+  },
+  'Omzet Drank Hoog': {
+    keywords: ['beer', 'wine', 'alcohol', 'bier', 'wijn'],
+    btwRate: 0.21,
+    twinfieldAccount: '8003',
+    group: 'horeca',
+  },
+  'Single Classes': {
+    keywords: [
+      'single class', 'yoga', 'pilates', 'flow', 'yin', 'vinyasa',
+      'ashtanga', 'hatha', 'restorative', 'breathwork', 'meditation',
+      'sound', 'losse les', 'drop in', 'drop-in', '€15', '€16', '€17', '€18',
+      'class', 'les'
+    ],
+    btwRate: 0.09,
+    twinfieldAccount: '8120',
+    group: 'yoga',
+  },
 };
 
 export const users = pgTable("users", {

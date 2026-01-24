@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
-import { Upload, FileSpreadsheet, ArrowRight, Info, Loader2 } from "lucide-react";
+import { Upload, ArrowRight, Info, Loader2 } from "lucide-react";
 
 export default function UploadPage() {
   const [, navigate] = useLocation();
@@ -73,7 +73,7 @@ export default function UploadPage() {
 
       if (data.success && data.sessionId) {
         toast({
-          title: "Reconciliatie voltooid",
+          title: "Verwerking voltooid",
           description: "Je resultaten zijn klaar om te bekijken.",
         });
         navigate(`/results/${data.sessionId}`);
@@ -93,15 +93,19 @@ export default function UploadPage() {
 
   return (
     <div className="min-h-screen flex flex-col">
-      <header className="border-b bg-card/50 backdrop-blur-sm sticky top-0 z-10">
+      <header className="border-b bg-white sticky top-0 z-10">
         <div className="container mx-auto px-4 py-4 flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
-              <FileSpreadsheet className="w-5 h-5 text-primary" />
-            </div>
-            <div>
-              <h1 className="font-semibold text-lg">DNYS Reconciliatie Tool</h1>
-              <p className="text-xs text-muted-foreground">De Nieuwe Yogaschool</p>
+          <div className="flex items-center gap-4">
+            <img 
+              src="https://denieuweyogaschool.nl/wp-content/uploads/2024/05/DNYS_Main.svg" 
+              alt="De Nieuwe Yogaschool" 
+              className="h-10 md:h-12"
+              data-testid="img-logo"
+            />
+            <div className="border-l border-border pl-4">
+              <h1 className="font-semibold text-lg" style={{ color: '#8B7355' }}>
+                Reconciliatie Tool
+              </h1>
             </div>
           </div>
           <Button 
@@ -121,14 +125,14 @@ export default function UploadPage() {
               Momence-Stripe Reconciliatie
             </h2>
             <p className="text-muted-foreground">
-              Upload je exports voor afstemming van betalingen
+              Automatische omzetcategorisatie en betalingsafstemming
             </p>
           </div>
 
           <Card className="shadow-lg">
             <CardHeader className="pb-4">
               <CardTitle className="text-lg">Periode selecteren</CardTitle>
-              <CardDescription>Voer de maand in waarvoor je wilt reconciliëren</CardDescription>
+              <CardDescription>Voer de maand in waarvoor je wilt verwerken</CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
               <div>
@@ -237,7 +241,7 @@ export default function UploadPage() {
                   </>
                 ) : (
                   <>
-                    Start Reconciliatie
+                    Start Verwerking
                     <ArrowRight className="w-4 h-4 ml-2" />
                   </>
                 )}
@@ -253,10 +257,10 @@ export default function UploadPage() {
                   <h4 className="font-medium text-accent-foreground mb-2">Instructies</h4>
                   <ol className="text-sm text-muted-foreground space-y-1.5 list-decimal list-inside">
                     <li>
-                      <strong>Momence:</strong> Analytics → Reports → Total Sales → Download CSV
+                      <strong>Momence:</strong> Analytics → Total Sales → CSV
                     </li>
                     <li>
-                      <strong>Stripe:</strong> Payments → Export → CSV (UTC format)
+                      <strong>Stripe:</strong> Payments → Itemized payout → CSV
                     </li>
                     <li>Upload beide bestanden hierboven</li>
                   </ol>

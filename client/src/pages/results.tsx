@@ -4,11 +4,10 @@ import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
 import { 
-  FileSpreadsheet, 
   Download, 
   ArrowLeft, 
   Check, 
@@ -16,9 +15,10 @@ import {
   X,
   TrendingUp,
   CreditCard,
-  Users,
+  ChevronDown,
+  ChevronUp,
   AlertCircle,
-  LayoutGrid
+  Users
 } from "lucide-react";
 import type { ReconciliationResult, CustomerComparison, PaymentMethodSummary, CategorySummary } from "@shared/schema";
 
@@ -77,42 +77,61 @@ function getStatusBadge(status: string) {
   }
 }
 
-function SummaryCard({ 
-  title, 
-  value, 
-  subtitle,
-  icon: Icon,
-  variant = "default"
-}: { 
-  title: string; 
-  value: string; 
-  subtitle?: string;
-  icon: React.ComponentType<{ className?: string }>;
-  variant?: "default" | "success" | "warning";
-}) {
-  const iconClasses = {
-    default: "text-primary",
-    success: "text-chart-2",
-    warning: "text-chart-3",
-  };
+interface RevenueCategoryTableProps {
+  categories: CategorySummary[];
+  title: string;
+}
+
+function RevenueCategoryTable({ categories, title }: RevenueCategoryTableProps) {
+  if (categories.length === 0) return null;
+
+  const total = categories.reduce((sum, c) => sum + (c.totalAmount ?? 0), 0);
+  const totalTax = categories.reduce((sum, c) => sum + ((c.totalAmount ?? 0) * (c.btwRate ?? 0.09)), 0);
 
   return (
-    <Card className="hover-elevate">
-      <CardContent className="pt-5 pb-4">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <p className="text-sm font-medium text-muted-foreground truncate">{title}</p>
-            <p className="text-xl md:text-2xl font-semibold mt-1 truncate">{value}</p>
-            {subtitle && (
-              <p className="text-xs text-muted-foreground mt-0.5">{subtitle}</p>
-            )}
-          </div>
-          <div className={`p-2.5 rounded-lg bg-muted shrink-0`}>
-            <Icon className={`w-5 h-5 ${iconClasses[variant]}`} />
-          </div>
-        </div>
-      </CardContent>
-    </Card>
+    <div className="mb-6">
+      <h3 className="font-semibold text-sm mb-3 text-muted-foreground uppercase tracking-wide">{title}</h3>
+      <div className="overflow-x-auto">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead className="min-w-[180px]">Categorie</TableHead>
+              <TableHead className="text-right w-20">Aantal</TableHead>
+              <TableHead className="text-right w-28">Bedrag</TableHead>
+              <TableHead className="text-right w-20">%</TableHead>
+              <TableHead className="text-right w-16">BTW</TableHead>
+              <TableHead className="text-right w-28">BTW Bedrag</TableHead>
+              <TableHead className="text-right w-20">Twinfield</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {categories.map((cat) => {
+              const btwAmount = (cat.totalAmount ?? 0) * (cat.btwRate ?? 0.09);
+              return (
+                <TableRow key={cat.id} data-testid={`row-category-${cat.id}`}>
+                  <TableCell className="font-medium">{cat.category}</TableCell>
+                  <TableCell className="text-right">{cat.transactionCount}</TableCell>
+                  <TableCell className="text-right font-mono text-sm">{formatCurrency(cat.totalAmount)}</TableCell>
+                  <TableCell className="text-right text-muted-foreground">{formatPercentage(cat.percentage)}</TableCell>
+                  <TableCell className="text-right">{((cat.btwRate ?? 0.09) * 100).toFixed(0)}%</TableCell>
+                  <TableCell className="text-right font-mono text-sm">{formatCurrency(btwAmount)}</TableCell>
+                  <TableCell className="text-right font-mono text-sm">{cat.twinfieldAccount || '8999'}</TableCell>
+                </TableRow>
+              );
+            })}
+            <TableRow className="bg-muted/50 font-semibold">
+              <TableCell>Subtotaal</TableCell>
+              <TableCell className="text-right"></TableCell>
+              <TableCell className="text-right font-mono">{formatCurrency(total)}</TableCell>
+              <TableCell className="text-right"></TableCell>
+              <TableCell className="text-right"></TableCell>
+              <TableCell className="text-right font-mono">{formatCurrency(totalTax)}</TableCell>
+              <TableCell className="text-right"></TableCell>
+            </TableRow>
+          </TableBody>
+        </Table>
+      </div>
+    </div>
   );
 }
 
@@ -180,64 +199,36 @@ function CustomerTable({
 }
 
 function PaymentMethodTable({ methods }: { methods: PaymentMethodSummary[] }) {
-  const maxAmount = Math.max(...methods.map((m) => m.totalAmount ?? 0), 1);
-
   return (
-    <div className="space-y-3">
-      {methods.map((method) => (
-        <div key={method.id} className="flex items-center gap-4" data-testid={`row-method-${method.id}`}>
-          <div className="w-32 md:w-40 shrink-0">
-            <p className="font-medium text-sm truncate">{method.paymentMethod}</p>
-            <p className="text-xs text-muted-foreground">{method.transactionCount} transacties</p>
-          </div>
-          <div className="flex-1 h-6 bg-muted rounded-full overflow-hidden">
-            <div
-              className="h-full bg-primary rounded-full transition-all duration-500"
-              style={{ width: `${((method.totalAmount ?? 0) / maxAmount) * 100}%` }}
-            />
-          </div>
-          <div className="w-28 text-right shrink-0">
-            <p className="font-mono text-sm font-medium">{formatCurrency(method.totalAmount)}</p>
-            <p className="text-xs text-muted-foreground">{formatPercentage(method.percentage)}</p>
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function CategoryTable({ categories }: { categories: CategorySummary[] }) {
-  const maxAmount = Math.max(...categories.map((c) => c.totalAmount ?? 0), 1);
-
-  if (categories.length === 0) {
-    return (
-      <div className="py-8 text-center text-muted-foreground">
-        <LayoutGrid className="w-10 h-10 mx-auto mb-2 opacity-40" />
-        <p>Geen categorieën beschikbaar</p>
-      </div>
-    );
-  }
-
-  return (
-    <div className="space-y-3">
-      {categories.map((cat) => (
-        <div key={cat.id} className="flex items-center gap-4" data-testid={`row-category-${cat.id}`}>
-          <div className="w-40 md:w-48 shrink-0">
-            <p className="font-medium text-sm truncate">{cat.category}</p>
-            <p className="text-xs text-muted-foreground">{cat.transactionCount} transacties</p>
-          </div>
-          <div className="flex-1 h-6 bg-muted rounded-full overflow-hidden">
-            <div
-              className="h-full bg-chart-3 rounded-full transition-all duration-500"
-              style={{ width: `${((cat.totalAmount ?? 0) / maxAmount) * 100}%` }}
-            />
-          </div>
-          <div className="w-28 text-right shrink-0">
-            <p className="font-mono text-sm font-medium">{formatCurrency(cat.totalAmount)}</p>
-            <p className="text-xs text-muted-foreground">{formatPercentage(cat.percentage)}</p>
-          </div>
-        </div>
-      ))}
+    <div className="overflow-x-auto">
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead className="min-w-[180px]">Betaalmethode</TableHead>
+            <TableHead className="text-right w-20">Aantal</TableHead>
+            <TableHead className="text-right w-28">Bedrag</TableHead>
+            <TableHead className="text-right w-20">%</TableHead>
+            <TableHead className="text-right w-24">Via Stripe</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {methods.map((method) => (
+            <TableRow key={method.id} data-testid={`row-method-${method.id}`}>
+              <TableCell className="font-medium">{method.paymentMethod}</TableCell>
+              <TableCell className="text-right">{method.transactionCount}</TableCell>
+              <TableCell className="text-right font-mono text-sm">{formatCurrency(method.totalAmount)}</TableCell>
+              <TableCell className="text-right text-muted-foreground">{formatPercentage(method.percentage)}</TableCell>
+              <TableCell className="text-right">
+                {method.goesThruStripe ? (
+                  <Check className="w-4 h-4 text-chart-2 inline" />
+                ) : (
+                  <X className="w-4 h-4 text-muted-foreground inline" />
+                )}
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
     </div>
   );
 }
@@ -268,6 +259,8 @@ export default function ResultsPage() {
   const params = useParams<{ sessionId: string }>();
   const [, navigate] = useLocation();
   const [filter, setFilter] = useState<"all" | "matched" | "differences">("all");
+  const [showPaymentMethods, setShowPaymentMethods] = useState(false);
+  const [showCustomers, setShowCustomers] = useState(false);
 
   const { data, isLoading, error } = useQuery<ReconciliationResult>({
     queryKey: ["/api/sessions", params.sessionId],
@@ -285,7 +278,7 @@ export default function ResultsPage() {
             <X className="w-12 h-12 mx-auto text-destructive mb-4" />
             <h2 className="text-lg font-semibold mb-2">Sessie niet gevonden</h2>
             <p className="text-muted-foreground mb-4">
-              Deze reconciliatie sessie kon niet worden geladen.
+              Deze sessie kon niet worden geladen.
             </p>
             <Button onClick={() => navigate("/")} data-testid="button-back-home">
               Terug naar home
@@ -296,9 +289,30 @@ export default function ResultsPage() {
     );
   }
 
+  const yogaCategories = data?.categories.filter(c => {
+    const yogaCats = ['Opleidingen', 'Online/Livestream', 'Gift Cards & Credits', 'Workshops & Events', 'Abonnementen', 'Rittenkaarten', 'Single Classes', 'Overig'];
+    return yogaCats.includes(c.category);
+  }) || [];
+
+  const horecaCategories = data?.categories.filter(c => {
+    const horecaCats = ['Omzet Keuken', 'Omzet Drank Laag', 'Omzet Drank Hoog'];
+    return horecaCats.includes(c.category);
+  }) || [];
+
+  const totalRevenue = data?.categories.reduce((sum, c) => sum + (c.totalAmount ?? 0), 0) ?? 0;
+  const totalBtw9 = data?.categories
+    .filter(c => (c.btwRate ?? 0.09) === 0.09)
+    .reduce((sum, c) => sum + (c.totalAmount ?? 0) * 0.09, 0) ?? 0;
+  const totalBtw21 = data?.categories
+    .filter(c => (c.btwRate ?? 0) === 0.21)
+    .reduce((sum, c) => sum + (c.totalAmount ?? 0) * 0.21, 0) ?? 0;
+  const totalBtw0 = data?.categories
+    .filter(c => (c.btwRate ?? 0) === 0)
+    .reduce((sum, c) => sum + (c.totalAmount ?? 0) * 0, 0) ?? 0;
+
   return (
     <div className="min-h-screen flex flex-col">
-      <header className="border-b bg-card/50 backdrop-blur-sm sticky top-0 z-10">
+      <header className="border-b bg-white sticky top-0 z-10">
         <div className="container mx-auto px-4 py-4 flex items-center justify-between gap-4 flex-wrap">
           <div className="flex items-center gap-3">
             <Button 
@@ -309,12 +323,14 @@ export default function ResultsPage() {
             >
               <ArrowLeft className="w-4 h-4" />
             </Button>
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
-                <FileSpreadsheet className="w-5 h-5 text-primary" />
-              </div>
-              <div>
-                <h1 className="font-semibold text-lg">Reconciliatie Resultaten</h1>
+            <div className="flex items-center gap-4">
+              <img 
+                src="https://denieuweyogaschool.nl/wp-content/uploads/2024/05/DNYS_Main.svg" 
+                alt="De Nieuwe Yogaschool" 
+                className="h-10"
+              />
+              <div className="border-l border-border pl-4">
+                <h1 className="font-semibold" style={{ color: '#8B7355' }}>Resultaten</h1>
                 {data?.session && (
                   <p className="text-xs text-muted-foreground">Periode: {data.session.period}</p>
                 )}
@@ -333,80 +349,170 @@ export default function ResultsPage() {
           <LoadingSkeleton />
         ) : data ? (
           <div className="space-y-6">
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              <SummaryCard
-                title="Momence Totaal"
-                value={formatCurrency(data.session.momenceTotal)}
-                subtitle="Alle Stripe betalingen"
-                icon={TrendingUp}
-              />
-              <SummaryCard
-                title="Stripe Totaal"
-                value={formatCurrency(data.session.stripeTotal)}
-                subtitle={`Kosten: ${formatCurrency(data.session.stripeFees)}`}
-                icon={CreditCard}
-              />
-              <SummaryCard
-                title="Gematcht"
-                value={String(data.session.matchedCount ?? 0)}
-                subtitle="Klanten"
-                icon={Check}
-                variant="success"
-              />
-              <SummaryCard
-                title="Verschillen"
-                value={String(data.session.unmatchedCount ?? 0)}
-                subtitle="Klanten"
-                icon={AlertTriangle}
-                variant={data.session.unmatchedCount && data.session.unmatchedCount > 0 ? "warning" : "default"}
-              />
-            </div>
-
             <Card>
-              <CardHeader className="pb-2">
-                <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-                  <CardTitle className="text-lg">Klant Vergelijking</CardTitle>
-                  <Tabs value={filter} onValueChange={(v) => setFilter(v as typeof filter)}>
-                    <TabsList>
-                      <TabsTrigger value="all" data-testid="tab-all">
-                        Alles ({data.comparisons.length})
-                      </TabsTrigger>
-                      <TabsTrigger value="matched" data-testid="tab-matched">
-                        Gematcht ({data.comparisons.filter(c => c.matchStatus === "match").length})
-                      </TabsTrigger>
-                      <TabsTrigger value="differences" data-testid="tab-differences">
-                        Verschillen ({data.comparisons.filter(c => c.matchStatus !== "match").length})
-                      </TabsTrigger>
-                    </TabsList>
-                  </Tabs>
-                </div>
+              <CardHeader className="pb-4">
+                <CardTitle className="text-xl" style={{ color: '#8B7355' }}>Omzet Categorieën</CardTitle>
               </CardHeader>
-              <CardContent className="pt-4">
-                <CustomerTable comparisons={data.comparisons} filter={filter} />
+              <CardContent>
+                <RevenueCategoryTable 
+                  categories={yogaCategories} 
+                  title="Yoga & Studio Services" 
+                />
+                <RevenueCategoryTable 
+                  categories={horecaCategories} 
+                  title="Horeca / Café" 
+                />
+
+                <div className="border-t pt-4 mt-4">
+                  <div className="flex justify-between items-center py-2 font-semibold text-lg">
+                    <span>Totaal Omzet</span>
+                    <span className="font-mono">{formatCurrency(totalRevenue)}</span>
+                  </div>
+                </div>
+
+                <div className="mt-6 p-4 bg-muted/50 rounded-lg">
+                  <h4 className="font-semibold mb-3">BTW Samenvatting</h4>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                    <div>
+                      <p className="text-muted-foreground">9% BTW</p>
+                      <p className="font-mono font-medium">{formatCurrency(totalBtw9)}</p>
+                    </div>
+                    <div>
+                      <p className="text-muted-foreground">21% BTW</p>
+                      <p className="font-mono font-medium">{formatCurrency(totalBtw21)}</p>
+                    </div>
+                    <div>
+                      <p className="text-muted-foreground">0% BTW</p>
+                      <p className="font-mono font-medium">{formatCurrency(totalBtw0)}</p>
+                    </div>
+                    <div>
+                      <p className="text-muted-foreground">Totaal BTW</p>
+                      <p className="font-mono font-semibold">{formatCurrency(totalBtw9 + totalBtw21 + totalBtw0)}</p>
+                    </div>
+                  </div>
+                </div>
               </CardContent>
             </Card>
 
-            {data.categories && data.categories.length > 0 && (
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-lg">Omzet per Categorie</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <CategoryTable categories={data.categories} />
-                </CardContent>
-              </Card>
-            )}
+            <Card>
+              <CardHeader className="pb-4">
+                <CardTitle className="text-xl" style={{ color: '#8B7355' }}>Stripe Controle</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+                  <div className="p-4 bg-muted/30 rounded-lg">
+                    <p className="text-sm text-muted-foreground mb-1">Momence Totaal</p>
+                    <p className="text-xl font-mono font-semibold">{formatCurrency(data.session.momenceTotal)}</p>
+                  </div>
+                  <div className="p-4 bg-muted/30 rounded-lg">
+                    <p className="text-sm text-muted-foreground mb-1">Stripe Gross</p>
+                    <p className="text-xl font-mono font-semibold">{formatCurrency(data.session.stripeTotal)}</p>
+                  </div>
+                  <div className="p-4 bg-muted/30 rounded-lg">
+                    <p className="text-sm text-muted-foreground mb-1">Verschil</p>
+                    <p className={`text-xl font-mono font-semibold ${
+                      Math.abs((data.session.momenceTotal ?? 0) - (data.session.stripeTotal ?? 0)) < 10 
+                        ? "text-chart-2" 
+                        : "text-destructive"
+                    }`}>
+                      {formatCurrency((data.session.momenceTotal ?? 0) - (data.session.stripeTotal ?? 0))}
+                    </p>
+                  </div>
+                  <div className="p-4 bg-muted/30 rounded-lg">
+                    <p className="text-sm text-muted-foreground mb-1">Status</p>
+                    <p className="text-xl font-semibold">
+                      {Math.abs((data.session.momenceTotal ?? 0) - (data.session.stripeTotal ?? 0)) < 10 ? (
+                        <span className="text-chart-2 flex items-center gap-1">
+                          <Check className="w-5 h-5" /> Match
+                        </span>
+                      ) : (
+                        <span className="text-destructive flex items-center gap-1">
+                          <AlertTriangle className="w-5 h-5" /> Verschil
+                        </span>
+                      )}
+                    </p>
+                  </div>
+                </div>
 
-            {data.paymentMethods.length > 0 && (
-              <Card>
-                <CardHeader>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+                  <div>
+                    <p className="text-sm text-muted-foreground">Stripe Fees</p>
+                    <p className="font-mono">{formatCurrency(data.session.stripeFees)}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-muted-foreground">Stripe Net (ontvangen)</p>
+                    <p className="font-mono font-semibold">{formatCurrency(data.session.stripeNet)}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-muted-foreground">Klanten Gematcht</p>
+                    <p className="font-semibold text-chart-2">{data.session.matchedCount}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm text-muted-foreground">Klanten met Verschillen</p>
+                    <p className="font-semibold text-chart-3">{data.session.unmatchedCount}</p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className="pb-2">
+                <button
+                  onClick={() => setShowPaymentMethods(!showPaymentMethods)}
+                  className="flex items-center justify-between w-full text-left"
+                  data-testid="toggle-payment-methods"
+                >
                   <CardTitle className="text-lg">Betaalmethode Overzicht</CardTitle>
-                </CardHeader>
-                <CardContent>
+                  {showPaymentMethods ? (
+                    <ChevronUp className="w-5 h-5 text-muted-foreground" />
+                  ) : (
+                    <ChevronDown className="w-5 h-5 text-muted-foreground" />
+                  )}
+                </button>
+              </CardHeader>
+              {showPaymentMethods && (
+                <CardContent className="pt-4">
                   <PaymentMethodTable methods={data.paymentMethods} />
                 </CardContent>
-              </Card>
-            )}
+              )}
+            </Card>
+
+            <Card>
+              <CardHeader className="pb-2">
+                <button
+                  onClick={() => setShowCustomers(!showCustomers)}
+                  className="flex items-center justify-between w-full text-left"
+                  data-testid="toggle-customers"
+                >
+                  <CardTitle className="text-lg">Klant Vergelijking</CardTitle>
+                  {showCustomers ? (
+                    <ChevronUp className="w-5 h-5 text-muted-foreground" />
+                  ) : (
+                    <ChevronDown className="w-5 h-5 text-muted-foreground" />
+                  )}
+                </button>
+              </CardHeader>
+              {showCustomers && (
+                <CardContent className="pt-4">
+                  <div className="mb-4">
+                    <Tabs value={filter} onValueChange={(v) => setFilter(v as typeof filter)}>
+                      <TabsList>
+                        <TabsTrigger value="all" data-testid="tab-all">
+                          Alles ({data.comparisons.length})
+                        </TabsTrigger>
+                        <TabsTrigger value="matched" data-testid="tab-matched">
+                          Gematcht ({data.comparisons.filter(c => c.matchStatus === "match").length})
+                        </TabsTrigger>
+                        <TabsTrigger value="differences" data-testid="tab-differences">
+                          Verschillen ({data.comparisons.filter(c => c.matchStatus !== "match").length})
+                        </TabsTrigger>
+                      </TabsList>
+                    </Tabs>
+                  </div>
+                  <CustomerTable comparisons={data.comparisons} filter={filter} />
+                </CardContent>
+              )}
+            </Card>
           </div>
         ) : null}
       </main>

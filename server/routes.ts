@@ -4,7 +4,7 @@ import multer from "multer";
 import Papa from "papaparse";
 import ExcelJS from "exceljs";
 import { storage } from "./storage";
-import { STRIPE_PAYMENT_METHODS, REVENUE_CATEGORY_RULES, type MatchStatus } from "@shared/schema";
+import { STRIPE_PAYMENT_METHODS, REVENUE_CATEGORIES, type MatchStatus, type CategoryConfig } from "@shared/schema";
 
 const upload = multer({ storage: multer.memoryStorage() });
 
@@ -35,6 +35,7 @@ interface StripeRow {
   Amount?: string;
   fee?: string;
   Fee?: string;
+  net?: string;
   customer_email?: string;
   "Customer Email"?: string;
   reporting_category?: string;
@@ -72,19 +73,51 @@ function getMatchStatus(difference: number): MatchStatus {
   return "large_diff";
 }
 
-function categorizeItem(itemName: string | undefined): string {
-  if (!itemName) return "Overig";
+interface CategoryResult {
+  category: string;
+  btwRate: number;
+  twinfieldAccount: string;
+}
+
+function categorizeItem(itemName: string | undefined): CategoryResult {
+  if (!itemName) {
+    return { category: "Overig", btwRate: 0.09, twinfieldAccount: "8999" };
+  }
+  
   const itemLower = itemName.toLowerCase();
   
-  for (const [category, keywords] of Object.entries(REVENUE_CATEGORY_RULES)) {
-    for (const keyword of keywords) {
+  const categoryOrder = [
+    'Opleidingen',
+    'Online/Livestream',
+    'Gift Cards & Credits',
+    'Workshops & Events',
+    'Abonnementen',
+    'Rittenkaarten',
+    'Omzet Keuken',
+    'Omzet Drank Laag',
+    'Omzet Drank Hoog',
+    'Single Classes',
+  ];
+  
+  for (const categoryName of categoryOrder) {
+    const config = REVENUE_CATEGORIES[categoryName];
+    if (!config) continue;
+    
+    for (const keyword of config.keywords) {
       if (itemLower.includes(keyword.toLowerCase())) {
-        return category;
+        if (categoryName === 'Rittenkaarten' && itemLower.includes('single')) {
+          continue;
+        }
+        return {
+          category: categoryName,
+          btwRate: config.btwRate,
+          twinfieldAccount: config.twinfieldAccount,
+        };
       }
     }
   }
   
-  return "Overig";
+  return { category: "Overig", btwRate: 0.09, twinfieldAccount: "8999" };
 }
 
 export async function registerRoutes(
@@ -120,26 +153,33 @@ export async function registerRoutes(
       });
 
       const momenceByEmail = new Map<string, number>();
-      const paymentMethodTotals = new Map<string, { count: number; total: number }>();
-      const categoryTotals = new Map<string, { count: number; total: number }>();
+      const paymentMethodTotals = new Map<string, { count: number; total: number; isStripe: boolean }>();
+      const categoryTotals = new Map<string, { 
+        count: number; 
+        total: number; 
+        totalTax: number;
+        btwRate: number; 
+        twinfieldAccount: string;
+      }>();
       let momenceTotalAll = 0;
       let nonStripeTotal = 0;
 
       for (const row of momenceResult.data) {
         const paymentMethod = row["Payment method"] || "";
         const saleValue = parseNumber(row["Sale value"]);
+        const tax = parseNumber(row.Tax);
         const customerEmail = normalizeEmail(row["Customer email"]);
         const item = row.Item || "";
-
-        const methodData = paymentMethodTotals.get(paymentMethod) || { count: 0, total: 0 };
-        methodData.count++;
-        methodData.total += saleValue;
-        paymentMethodTotals.set(paymentMethod, methodData);
-        momenceTotalAll += saleValue;
 
         const isStripeMethod = STRIPE_PAYMENT_METHODS.some(
           (m) => paymentMethod.toLowerCase().includes(m.toLowerCase())
         );
+
+        const methodData = paymentMethodTotals.get(paymentMethod) || { count: 0, total: 0, isStripe: isStripeMethod };
+        methodData.count++;
+        methodData.total += saleValue;
+        paymentMethodTotals.set(paymentMethod, methodData);
+        momenceTotalAll += saleValue;
 
         if (isStripeMethod) {
           if (customerEmail) {
@@ -147,10 +187,17 @@ export async function registerRoutes(
             momenceByEmail.set(customerEmail, current + saleValue);
           }
           
-          const category = categorizeItem(item);
-          const catData = categoryTotals.get(category) || { count: 0, total: 0 };
+          const { category, btwRate, twinfieldAccount } = categorizeItem(item);
+          const catData = categoryTotals.get(category) || { 
+            count: 0, 
+            total: 0, 
+            totalTax: 0,
+            btwRate, 
+            twinfieldAccount 
+          };
           catData.count++;
           catData.total += saleValue;
+          catData.totalTax += tax;
           categoryTotals.set(category, catData);
         } else {
           nonStripeTotal += saleValue;
@@ -237,12 +284,14 @@ export async function registerRoutes(
       comparisons.sort((a, b) => Math.abs(b.difference) - Math.abs(a.difference));
 
       const momenceStripeTotal = Array.from(momenceByEmail.values()).reduce((a, b) => a + b, 0);
+      const stripeNetTotal = stripeTotalAmount - stripeTotalFees;
 
       const session = await storage.createSession({
         period,
         momenceTotal: momenceStripeTotal,
         stripeTotal: stripeTotalAmount,
         stripeFees: stripeTotalFees,
+        stripeNet: stripeNetTotal,
         nonStripeTotal,
         matchedCount,
         unmatchedCount,
@@ -264,6 +313,7 @@ export async function registerRoutes(
         transactionCount: data.count,
         totalAmount: data.total,
         percentage: momenceTotalAll > 0 ? (data.total / momenceTotalAll) * 100 : 0,
+        goesThruStripe: data.isStripe ? 1 : 0,
       }));
 
       await storage.addPaymentMethods(session.id, paymentMethods);
@@ -277,6 +327,9 @@ export async function registerRoutes(
         category,
         transactionCount: data.count,
         totalAmount: data.total,
+        totalTax: data.totalTax,
+        btwRate: data.btwRate,
+        twinfieldAccount: data.twinfieldAccount,
         percentage: categoryTotal > 0 ? (data.total / categoryTotal) * 100 : 0,
       }));
 
@@ -326,59 +379,202 @@ export async function registerRoutes(
       workbook.creator = "DNYS Reconciliatie Tool";
       workbook.created = new Date();
 
-      const summarySheet = workbook.addWorksheet("Samenvatting");
-      summarySheet.columns = [
-        { header: "Omschrijving", key: "description", width: 30 },
-        { header: "Bedrag", key: "amount", width: 20 },
-      ];
-
-      summarySheet.addRow({});
-      summarySheet.getCell("A1").value = `Reconciliatie Rapport - ${session.period}`;
-      summarySheet.getCell("A1").font = { bold: true, size: 16 };
-      summarySheet.mergeCells("A1:B1");
-
-      summarySheet.addRow({});
-      summarySheet.getCell("A3").value = `Datum gegenereerd: ${new Date().toLocaleString("nl-NL")}`;
-
-      summarySheet.addRow({});
-      summarySheet.addRow({ description: "Omschrijving", amount: "Bedrag" });
-      summarySheet.getRow(5).font = { bold: true };
-
       const formatEuro = (value: number | null | undefined) => {
         const num = value ?? 0;
         return new Intl.NumberFormat("nl-NL", { style: "currency", currency: "EUR" }).format(num);
       };
 
-      summarySheet.addRow({ description: "Momence Totaal (Stripe methoden)", amount: formatEuro(session.momenceTotal) });
-      summarySheet.addRow({ description: "Stripe Totaal", amount: formatEuro(session.stripeTotal) });
-      summarySheet.addRow({ description: "Stripe Kosten", amount: formatEuro(session.stripeFees) });
-      summarySheet.addRow({ description: "Stripe Netto", amount: formatEuro((session.stripeTotal ?? 0) - (session.stripeFees ?? 0)) });
-      summarySheet.addRow({ description: "Non-Stripe Betalingen", amount: formatEuro(session.nonStripeTotal) });
-      summarySheet.addRow({});
-      summarySheet.addRow({ description: "Klanten Gematcht", amount: session.matchedCount?.toString() ?? "0" });
-      summarySheet.addRow({ description: "Klanten met Verschillen", amount: session.unmatchedCount?.toString() ?? "0" });
+      const headerStyle: Partial<ExcelJS.Style> = {
+        font: { bold: true, color: { argb: 'FFFFFFFF' } },
+        fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF8B7355' } },
+        alignment: { horizontal: 'left' },
+      };
 
-      const comparisonSheet = workbook.addWorksheet("Klant Vergelijking");
-      comparisonSheet.columns = [
-        { header: "Klant Email", key: "email", width: 40 },
-        { header: "Momence", key: "momence", width: 15 },
-        { header: "Stripe", key: "stripe", width: 15 },
-        { header: "Verschil", key: "difference", width: 15 },
-        { header: "Status", key: "status", width: 20 },
+      const categoriesSheet = workbook.addWorksheet("Omzet Categorieën");
+      
+      categoriesSheet.getCell("A1").value = "De Nieuwe Yogaschool - Omzet Overzicht";
+      categoriesSheet.getCell("A1").font = { bold: true, size: 16, color: { argb: 'FF8B7355' } };
+      categoriesSheet.mergeCells("A1:G1");
+      
+      categoriesSheet.getCell("A2").value = `Periode: ${session.period}`;
+      categoriesSheet.getCell("A3").value = `Gegenereerd: ${new Date().toLocaleString("nl-NL")}`;
+      
+      categoriesSheet.addRow([]);
+      
+      const yogaCategories = categories.filter(c => {
+        const config = REVENUE_CATEGORIES[c.category];
+        return config?.group === 'yoga' || !config;
+      });
+      const horecaCategories = categories.filter(c => {
+        const config = REVENUE_CATEGORIES[c.category];
+        return config?.group === 'horeca';
+      });
+
+      categoriesSheet.getCell("A5").value = "YOGA & STUDIO SERVICES";
+      categoriesSheet.getCell("A5").font = { bold: true, size: 12 };
+      
+      const catHeaders = ["Categorie", "Aantal", "Bedrag", "% van Totaal", "BTW%", "BTW Bedrag", "Twinfield"];
+      categoriesSheet.addRow(catHeaders);
+      const headerRow = categoriesSheet.getRow(6);
+      headerRow.eachCell((cell) => {
+        cell.style = headerStyle;
+      });
+
+      categoriesSheet.columns = [
+        { key: 'cat', width: 25 },
+        { key: 'count', width: 12 },
+        { key: 'amount', width: 18 },
+        { key: 'pct', width: 14 },
+        { key: 'btw', width: 10 },
+        { key: 'btwAmt', width: 15 },
+        { key: 'twin', width: 12 },
       ];
-      comparisonSheet.getRow(1).font = { bold: true };
 
-      for (const comp of comparisons) {
-        comparisonSheet.addRow({
-          email: comp.customerEmail,
-          momence: formatEuro(comp.momenceTotal),
-          stripe: formatEuro(comp.stripeAmount),
-          difference: formatEuro(comp.difference),
-          status: comp.matchStatus === "match" ? "✓ Match" :
-                  comp.matchStatus === "small_diff" ? "⚠ Klein verschil" :
-                  comp.matchStatus === "large_diff" ? "❌ Groot verschil" :
-                  comp.matchStatus === "only_in_momence" ? "⚠ Alleen Momence" :
-                  "⚠ Alleen Stripe",
+      let yogaTotal = 0;
+      let yogaTaxTotal = 0;
+      for (const cat of yogaCategories) {
+        const btwAmount = (cat.totalAmount ?? 0) * (cat.btwRate ?? 0.09);
+        yogaTotal += cat.totalAmount ?? 0;
+        yogaTaxTotal += btwAmount;
+        categoriesSheet.addRow([
+          cat.category,
+          cat.transactionCount,
+          formatEuro(cat.totalAmount),
+          `${(cat.percentage ?? 0).toFixed(1)}%`,
+          `${((cat.btwRate ?? 0.09) * 100).toFixed(0)}%`,
+          formatEuro(btwAmount),
+          cat.twinfieldAccount || '8999',
+        ]);
+      }
+
+      const yogaSubtotalRow = categoriesSheet.addRow([
+        "Subtotaal Yoga",
+        "",
+        formatEuro(yogaTotal),
+        "",
+        "",
+        formatEuro(yogaTaxTotal),
+        "",
+      ]);
+      yogaSubtotalRow.font = { bold: true };
+      yogaSubtotalRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF5F1E8' } };
+
+      categoriesSheet.addRow([]);
+      
+      const horecaHeaderRow = categoriesSheet.addRow(["HORECA / CAFÉ"]);
+      horecaHeaderRow.getCell(1).font = { bold: true, size: 12 };
+
+      categoriesSheet.addRow(catHeaders);
+      const horecaHdrRow = categoriesSheet.lastRow;
+      horecaHdrRow?.eachCell((cell) => {
+        cell.style = headerStyle;
+      });
+
+      let horecaTotal = 0;
+      let horecaTaxTotal = 0;
+      for (const cat of horecaCategories) {
+        const btwAmount = (cat.totalAmount ?? 0) * (cat.btwRate ?? 0.09);
+        horecaTotal += cat.totalAmount ?? 0;
+        horecaTaxTotal += btwAmount;
+        categoriesSheet.addRow([
+          cat.category,
+          cat.transactionCount,
+          formatEuro(cat.totalAmount),
+          `${(cat.percentage ?? 0).toFixed(1)}%`,
+          `${((cat.btwRate ?? 0.09) * 100).toFixed(0)}%`,
+          formatEuro(btwAmount),
+          cat.twinfieldAccount || '8999',
+        ]);
+      }
+
+      const horecaSubtotalRow = categoriesSheet.addRow([
+        "Subtotaal Horeca",
+        "",
+        formatEuro(horecaTotal),
+        "",
+        "",
+        formatEuro(horecaTaxTotal),
+        "",
+      ]);
+      horecaSubtotalRow.font = { bold: true };
+      horecaSubtotalRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF5F1E8' } };
+
+      categoriesSheet.addRow([]);
+      
+      const grandTotalRow = categoriesSheet.addRow([
+        "TOTAAL OMZET",
+        "",
+        formatEuro(yogaTotal + horecaTotal),
+        "100%",
+        "",
+        formatEuro(yogaTaxTotal + horecaTaxTotal),
+        "",
+      ]);
+      grandTotalRow.font = { bold: true, size: 12 };
+      grandTotalRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF8B7355' } };
+      grandTotalRow.eachCell((cell) => {
+        cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+      });
+
+      categoriesSheet.addRow([]);
+      categoriesSheet.addRow([]);
+      const btwSummaryHeader = categoriesSheet.addRow(["BTW SAMENVATTING"]);
+      btwSummaryHeader.getCell(1).font = { bold: true, size: 12 };
+
+      const btw9Total = categories
+        .filter(c => (c.btwRate ?? 0.09) === 0.09)
+        .reduce((sum, c) => sum + (c.totalAmount ?? 0) * 0.09, 0);
+      const btw21Total = categories
+        .filter(c => (c.btwRate ?? 0) === 0.21)
+        .reduce((sum, c) => sum + (c.totalAmount ?? 0) * 0.21, 0);
+      const btw0Total = categories
+        .filter(c => (c.btwRate ?? 0) === 0)
+        .reduce((sum, c) => sum + (c.totalAmount ?? 0) * 0, 0);
+
+      categoriesSheet.addRow(["9% BTW:", formatEuro(btw9Total)]);
+      categoriesSheet.addRow(["21% BTW:", formatEuro(btw21Total)]);
+      categoriesSheet.addRow(["0% BTW:", formatEuro(btw0Total)]);
+      const btwTotalRow = categoriesSheet.addRow(["Totaal BTW:", formatEuro(btw9Total + btw21Total)]);
+      btwTotalRow.font = { bold: true };
+
+      const stripeSheet = workbook.addWorksheet("Stripe Controle");
+      stripeSheet.columns = [
+        { header: "Omschrijving", key: "description", width: 30 },
+        { header: "Bedrag", key: "amount", width: 20 },
+        { header: "Status", key: "status", width: 15 },
+      ];
+      stripeSheet.getRow(1).font = { bold: true };
+
+      stripeSheet.addRow({ description: "Momence Totaal (Stripe methoden)", amount: formatEuro(session.momenceTotal) });
+      stripeSheet.addRow({ description: "Stripe Gross", amount: formatEuro(session.stripeTotal) });
+      
+      const diff = (session.momenceTotal ?? 0) - (session.stripeTotal ?? 0);
+      const diffStatus = Math.abs(diff) < 10 ? "Match" : "Verschil";
+      stripeSheet.addRow({ description: "Verschil", amount: formatEuro(diff), status: diffStatus });
+      stripeSheet.addRow({});
+      stripeSheet.addRow({ description: "Stripe Fees", amount: formatEuro(session.stripeFees) });
+      stripeSheet.addRow({ description: "Stripe Net (ontvangen)", amount: formatEuro(session.stripeNet) });
+      stripeSheet.addRow({});
+      stripeSheet.addRow({ description: "Klanten Gematcht", amount: String(session.matchedCount ?? 0) });
+      stripeSheet.addRow({ description: "Klanten met Verschillen", amount: String(session.unmatchedCount ?? 0) });
+
+      const methodsSheet = workbook.addWorksheet("Betaalmethoden");
+      methodsSheet.columns = [
+        { header: "Betaalmethode", key: "method", width: 25 },
+        { header: "Aantal", key: "count", width: 12 },
+        { header: "Totaal", key: "total", width: 18 },
+        { header: "Percentage", key: "percentage", width: 12 },
+        { header: "Via Stripe", key: "stripe", width: 12 },
+      ];
+      methodsSheet.getRow(1).font = { bold: true };
+
+      for (const method of paymentMethods) {
+        methodsSheet.addRow({
+          method: method.paymentMethod,
+          count: method.transactionCount,
+          total: formatEuro(method.totalAmount),
+          percentage: `${(method.percentage ?? 0).toFixed(1)}%`,
+          stripe: method.goesThruStripe ? "Ja" : "Nee",
         });
       }
 
@@ -399,46 +595,34 @@ export async function registerRoutes(
           momence: formatEuro(comp.momenceTotal),
           stripe: formatEuro(comp.stripeAmount),
           difference: formatEuro(comp.difference),
-          status: comp.matchStatus === "small_diff" ? "⚠ Klein verschil" :
-                  comp.matchStatus === "large_diff" ? "❌ Groot verschil" :
-                  comp.matchStatus === "only_in_momence" ? "⚠ Alleen Momence" :
-                  "⚠ Alleen Stripe",
+          status: comp.matchStatus === "small_diff" ? "Klein verschil" :
+                  comp.matchStatus === "large_diff" ? "Groot verschil" :
+                  comp.matchStatus === "only_in_momence" ? "Alleen Momence" :
+                  "Alleen Stripe",
         });
       }
 
-      const methodsSheet = workbook.addWorksheet("Betaalmethoden");
-      methodsSheet.columns = [
-        { header: "Betaalmethode", key: "method", width: 25 },
-        { header: "Aantal", key: "count", width: 12 },
-        { header: "Totaal", key: "total", width: 18 },
-        { header: "Percentage", key: "percentage", width: 12 },
+      const comparisonSheet = workbook.addWorksheet("Alle Klanten");
+      comparisonSheet.columns = [
+        { header: "Klant Email", key: "email", width: 40 },
+        { header: "Momence", key: "momence", width: 15 },
+        { header: "Stripe", key: "stripe", width: 15 },
+        { header: "Verschil", key: "difference", width: 15 },
+        { header: "Status", key: "status", width: 20 },
       ];
-      methodsSheet.getRow(1).font = { bold: true };
+      comparisonSheet.getRow(1).font = { bold: true };
 
-      for (const method of paymentMethods) {
-        methodsSheet.addRow({
-          method: method.paymentMethod,
-          count: method.transactionCount,
-          total: formatEuro(method.totalAmount),
-          percentage: `${(method.percentage ?? 0).toFixed(1)}%`,
-        });
-      }
-
-      const categoriesSheet = workbook.addWorksheet("Omzet Categorieën");
-      categoriesSheet.columns = [
-        { header: "Categorie", key: "category", width: 25 },
-        { header: "Aantal", key: "count", width: 12 },
-        { header: "Totaal", key: "total", width: 18 },
-        { header: "Percentage", key: "percentage", width: 12 },
-      ];
-      categoriesSheet.getRow(1).font = { bold: true };
-
-      for (const cat of categories) {
-        categoriesSheet.addRow({
-          category: cat.category,
-          count: cat.transactionCount,
-          total: formatEuro(cat.totalAmount),
-          percentage: `${(cat.percentage ?? 0).toFixed(1)}%`,
+      for (const comp of comparisons) {
+        comparisonSheet.addRow({
+          email: comp.customerEmail,
+          momence: formatEuro(comp.momenceTotal),
+          stripe: formatEuro(comp.stripeAmount),
+          difference: formatEuro(comp.difference),
+          status: comp.matchStatus === "match" ? "Match" :
+                  comp.matchStatus === "small_diff" ? "Klein verschil" :
+                  comp.matchStatus === "large_diff" ? "Groot verschil" :
+                  comp.matchStatus === "only_in_momence" ? "Alleen Momence" :
+                  "Alleen Stripe",
         });
       }
 
@@ -448,7 +632,7 @@ export async function registerRoutes(
       );
       res.setHeader(
         "Content-Disposition",
-        `attachment; filename=reconciliatie-${session.period}.xlsx`
+        `attachment; filename=DNYS-reconciliatie-${session.period}.xlsx`
       );
 
       await workbook.xlsx.write(res);
