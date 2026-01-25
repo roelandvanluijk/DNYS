@@ -20,7 +20,7 @@ import {
   AlertCircle,
   Users
 } from "lucide-react";
-import type { ReconciliationResult, CustomerComparison, PaymentMethodSummary, CategorySummary } from "@shared/schema";
+import type { ReconciliationResult, CustomerComparison, PaymentMethodSummary, CategoryWithDetails } from "@shared/schema";
 import dnysLogo from "@/assets/dnys-logo.svg";
 
 function formatCurrency(value: number | null | undefined): string {
@@ -79,15 +79,29 @@ function getStatusBadge(status: string) {
 }
 
 interface RevenueCategoryTableProps {
-  categories: CategorySummary[];
+  categories: CategoryWithDetails[];
   title: string;
 }
 
 function RevenueCategoryTable({ categories, title }: RevenueCategoryTableProps) {
+  const [expandedCategories, setExpandedCategories] = useState<Set<number>>(new Set());
+
   if (categories.length === 0) return null;
 
   const total = categories.reduce((sum, c) => sum + (c.totalAmount ?? 0), 0);
   const totalTax = categories.reduce((sum, c) => sum + ((c.totalAmount ?? 0) * (c.btwRate ?? 0.09)), 0);
+
+  const toggleCategory = (id: number) => {
+    setExpandedCategories(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
 
   return (
     <div className="mb-6">
@@ -96,6 +110,7 @@ function RevenueCategoryTable({ categories, title }: RevenueCategoryTableProps) 
         <Table>
           <TableHeader>
             <TableRow>
+              <TableHead className="w-8"></TableHead>
               <TableHead className="min-w-[180px]">Categorie</TableHead>
               <TableHead className="text-right w-20">Aantal</TableHead>
               <TableHead className="text-right w-28">Bedrag</TableHead>
@@ -108,19 +123,73 @@ function RevenueCategoryTable({ categories, title }: RevenueCategoryTableProps) 
           <TableBody>
             {categories.map((cat) => {
               const btwAmount = (cat.totalAmount ?? 0) * (cat.btwRate ?? 0.09);
+              const isExpanded = expandedCategories.has(cat.id);
+              const hasItems = cat.items && cat.items.length > 0;
               return (
-                <TableRow key={cat.id} data-testid={`row-category-${cat.id}`}>
-                  <TableCell className="font-medium">{cat.category}</TableCell>
-                  <TableCell className="text-right">{cat.transactionCount}</TableCell>
-                  <TableCell className="text-right font-mono text-sm">{formatCurrency(cat.totalAmount)}</TableCell>
-                  <TableCell className="text-right text-muted-foreground">{formatPercentage(cat.percentage)}</TableCell>
-                  <TableCell className="text-right">{((cat.btwRate ?? 0.09) * 100).toFixed(0)}%</TableCell>
-                  <TableCell className="text-right font-mono text-sm">{formatCurrency(btwAmount)}</TableCell>
-                  <TableCell className="text-right font-mono text-sm">{cat.twinfieldAccount || '8999'}</TableCell>
-                </TableRow>
+                <>
+                  <TableRow 
+                    key={cat.id} 
+                    data-testid={`row-category-${cat.id}`}
+                    className={hasItems ? "cursor-pointer hover:bg-muted/50" : ""}
+                    onClick={() => hasItems && toggleCategory(cat.id)}
+                  >
+                    <TableCell className="w-8 py-2">
+                      {hasItems && (
+                        <button
+                          type="button"
+                          className="p-1 hover:bg-muted rounded"
+                          data-testid={`btn-expand-category-${cat.id}`}
+                        >
+                          {isExpanded ? (
+                            <ChevronUp className="w-4 h-4 text-muted-foreground" />
+                          ) : (
+                            <ChevronDown className="w-4 h-4 text-muted-foreground" />
+                          )}
+                        </button>
+                      )}
+                    </TableCell>
+                    <TableCell className="font-medium">{cat.category}</TableCell>
+                    <TableCell className="text-right">{cat.transactionCount}</TableCell>
+                    <TableCell className="text-right font-mono text-sm">{formatCurrency(cat.totalAmount)}</TableCell>
+                    <TableCell className="text-right text-muted-foreground">{formatPercentage(cat.percentage)}</TableCell>
+                    <TableCell className="text-right">{((cat.btwRate ?? 0.09) * 100).toFixed(0)}%</TableCell>
+                    <TableCell className="text-right font-mono text-sm">{formatCurrency(btwAmount)}</TableCell>
+                    <TableCell className="text-right font-mono text-sm">{cat.twinfieldAccount || '8999'}</TableCell>
+                  </TableRow>
+                  {isExpanded && hasItems && (
+                    <TableRow key={`${cat.id}-details`} className="bg-muted/30">
+                      <TableCell colSpan={8} className="py-0">
+                        <div className="py-3 px-4 ml-6">
+                          <div className="text-xs text-muted-foreground mb-2 font-medium">Opbouw van {cat.category}:</div>
+                          <div className="max-h-48 overflow-y-auto">
+                            <table className="w-full text-sm">
+                              <thead>
+                                <tr className="text-xs text-muted-foreground border-b">
+                                  <th className="text-left py-1 font-medium">Product</th>
+                                  <th className="text-right py-1 font-medium w-16">Aantal</th>
+                                  <th className="text-right py-1 font-medium w-24">Bedrag</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {cat.items?.map((item, idx) => (
+                                  <tr key={idx} className="border-b border-muted/50 last:border-0">
+                                    <td className="py-1.5 truncate max-w-[300px]" title={item.item}>{item.item}</td>
+                                    <td className="text-right py-1.5 text-muted-foreground">{item.count}</td>
+                                    <td className="text-right py-1.5 font-mono">{formatCurrency(item.amount)}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </>
               );
             })}
             <TableRow className="bg-muted/50 font-semibold">
+              <TableCell></TableCell>
               <TableCell>Subtotaal</TableCell>
               <TableCell className="text-right"></TableCell>
               <TableCell className="text-right font-mono">{formatCurrency(total)}</TableCell>

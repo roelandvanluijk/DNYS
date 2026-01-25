@@ -4,8 +4,18 @@ import type {
   CustomerComparison, 
   PaymentMethodSummary,
   CategorySummary,
+  CategoryItemDetail,
+  CategoryWithDetails,
   ReconciliationResult 
 } from "@shared/schema";
+
+export interface CategorySettings {
+  name: string;
+  keywords: string[];
+  btwRate: number;
+  twinfieldAccount: string;
+  group: "yoga" | "horeca";
+}
 
 export interface IStorage {
   createSession(session: Omit<ReconciliationSession, "id" | "createdAt">): Promise<ReconciliationSession>;
@@ -17,7 +27,12 @@ export interface IStorage {
   getPaymentMethods(sessionId: string): Promise<PaymentMethodSummary[]>;
   addCategories(sessionId: string, categories: Omit<CategorySummary, "id">[]): Promise<void>;
   getCategories(sessionId: string): Promise<CategorySummary[]>;
+  addCategoryItems(sessionId: string, categoryName: string, items: CategoryItemDetail[]): Promise<void>;
+  getCategoryItems(sessionId: string, categoryName: string): Promise<CategoryItemDetail[]>;
   getFullResult(sessionId: string): Promise<ReconciliationResult | undefined>;
+  getCategorySettings(): Promise<CategorySettings[] | null>;
+  saveCategorySettings(settings: CategorySettings[]): Promise<void>;
+  resetCategorySettings(): Promise<void>;
 }
 
 export class MemStorage implements IStorage {
@@ -25,6 +40,8 @@ export class MemStorage implements IStorage {
   private comparisons: Map<string, CustomerComparison[]>;
   private paymentMethods: Map<string, PaymentMethodSummary[]>;
   private categories: Map<string, CategorySummary[]>;
+  private categoryItems: Map<string, Map<string, CategoryItemDetail[]>>;
+  private customCategorySettings: CategorySettings[] | null;
   private comparisonIdCounter: number;
   private methodIdCounter: number;
   private categoryIdCounter: number;
@@ -34,6 +51,8 @@ export class MemStorage implements IStorage {
     this.comparisons = new Map();
     this.paymentMethods = new Map();
     this.categories = new Map();
+    this.categoryItems = new Map();
+    this.customCategorySettings = null;
     this.comparisonIdCounter = 1;
     this.methodIdCounter = 1;
     this.categoryIdCounter = 1;
@@ -98,15 +117,49 @@ export class MemStorage implements IStorage {
     return this.categories.get(sessionId) || [];
   }
 
+  async addCategoryItems(sessionId: string, categoryName: string, items: CategoryItemDetail[]): Promise<void> {
+    if (!this.categoryItems.has(sessionId)) {
+      this.categoryItems.set(sessionId, new Map());
+    }
+    const sessionItems = this.categoryItems.get(sessionId)!;
+    sessionItems.set(categoryName, items);
+  }
+
+  async getCategoryItems(sessionId: string, categoryName: string): Promise<CategoryItemDetail[]> {
+    const sessionItems = this.categoryItems.get(sessionId);
+    if (!sessionItems) return [];
+    return sessionItems.get(categoryName) || [];
+  }
+
   async getFullResult(sessionId: string): Promise<ReconciliationResult | undefined> {
     const session = await this.getSession(sessionId);
     if (!session) return undefined;
 
     const comparisons = await this.getComparisons(sessionId);
     const paymentMethods = await this.getPaymentMethods(sessionId);
-    const categories = await this.getCategories(sessionId);
+    const baseCategories = await this.getCategories(sessionId);
+    
+    // Attach item details to each category
+    const categories: CategoryWithDetails[] = await Promise.all(
+      baseCategories.map(async (cat) => ({
+        ...cat,
+        items: await this.getCategoryItems(sessionId, cat.category),
+      }))
+    );
 
     return { session, comparisons, paymentMethods, categories };
+  }
+
+  async getCategorySettings(): Promise<CategorySettings[] | null> {
+    return this.customCategorySettings;
+  }
+
+  async saveCategorySettings(settings: CategorySettings[]): Promise<void> {
+    this.customCategorySettings = settings;
+  }
+
+  async resetCategorySettings(): Promise<void> {
+    this.customCategorySettings = null;
   }
 }
 

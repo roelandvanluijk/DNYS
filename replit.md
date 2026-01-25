@@ -140,3 +140,7 @@ Old format: `Amount`, `Fee`, `Customer Email`, `Status`
 - Added BTW summary to results page and Excel export
 - Excel export now includes separate Yoga and Horeca sections
 - Added "Via Stripe" indicator to payment methods
+- Added expandable dropdowns to revenue categories to show item breakdown
+- Created Settings page (/settings) to customize Twinfield codes, BTW rates, and keywords
+- Excluded info@denieuweyogaschool.nl from customer comparisons (studio's own email)
+- Added column chooser to customer comparison table (Email, Producten, Datum, Aantal, Momence, Stripe, Verschil, Status)

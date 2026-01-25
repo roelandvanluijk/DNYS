@@ -116,6 +116,13 @@ export default function UploadPage() {
           >
             Eerdere sessies
           </Button>
+          <Button 
+            variant="ghost" 
+            onClick={() => navigate("/settings")}
+            data-testid="link-settings"
+          >
+            Instellingen
+          </Button>
         </div>
       </header>
 

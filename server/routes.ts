@@ -6,6 +6,9 @@ import ExcelJS from "exceljs";
 import { storage } from "./storage";
 import { STRIPE_PAYMENT_METHODS, REVENUE_CATEGORIES, type MatchStatus, type CategoryConfig } from "@shared/schema";
 
+// Emails to exclude from customer comparisons (studio's own email)
+const EXCLUDED_EMAILS = ["info@denieuweyogaschool.nl"];
+
 const upload = multer({ storage: multer.memoryStorage() });
 
 interface MomenceRow {
@@ -79,13 +82,25 @@ interface CategoryResult {
   twinfieldAccount: string;
 }
 
-function categorizeItem(itemName: string | undefined): CategoryResult {
+interface CustomCategoryConfig {
+  name: string;
+  keywords: string[];
+  btwRate: number;
+  twinfieldAccount: string;
+  group: "yoga" | "horeca";
+}
+
+function categorizeItem(
+  itemName: string | undefined, 
+  customCategories: CustomCategoryConfig[] | null
+): CategoryResult {
   if (!itemName) {
     return { category: "Overig", btwRate: 0.09, twinfieldAccount: "8999" };
   }
   
   const itemLower = itemName.toLowerCase();
   
+  // Priority order for categories
   const categoryOrder = [
     'Opleidingen',
     'Online/Livestream',
@@ -99,20 +114,41 @@ function categorizeItem(itemName: string | undefined): CategoryResult {
     'Single Classes',
   ];
   
-  for (const categoryName of categoryOrder) {
-    const config = REVENUE_CATEGORIES[categoryName];
-    if (!config) continue;
-    
-    for (const keyword of config.keywords) {
-      if (itemLower.includes(keyword.toLowerCase())) {
-        if (categoryName === 'Rittenkaarten' && itemLower.includes('single')) {
-          continue;
+  // Use custom categories if available, otherwise use defaults
+  if (customCategories) {
+    for (const categoryName of categoryOrder) {
+      const config = customCategories.find(c => c.name === categoryName);
+      if (!config) continue;
+      
+      for (const keyword of config.keywords) {
+        if (itemLower.includes(keyword.toLowerCase())) {
+          if (categoryName === 'Rittenkaarten' && itemLower.includes('single')) {
+            continue;
+          }
+          return {
+            category: categoryName,
+            btwRate: config.btwRate,
+            twinfieldAccount: config.twinfieldAccount,
+          };
         }
-        return {
-          category: categoryName,
-          btwRate: config.btwRate,
-          twinfieldAccount: config.twinfieldAccount,
-        };
+      }
+    }
+  } else {
+    for (const categoryName of categoryOrder) {
+      const config = REVENUE_CATEGORIES[categoryName];
+      if (!config) continue;
+      
+      for (const keyword of config.keywords) {
+        if (itemLower.includes(keyword.toLowerCase())) {
+          if (categoryName === 'Rittenkaarten' && itemLower.includes('single')) {
+            continue;
+          }
+          return {
+            category: categoryName,
+            btwRate: config.btwRate,
+            twinfieldAccount: config.twinfieldAccount,
+          };
+        }
       }
     }
   }
@@ -152,6 +188,9 @@ export async function registerRoutes(
         skipEmptyLines: true,
       });
 
+      // Fetch custom category settings (if any)
+      const customCategories = await storage.getCategorySettings();
+
       const momenceByEmail = new Map<string, number>();
       const momenceItemsByEmail = new Map<string, Set<string>>();
       const momenceDatesByEmail = new Map<string, Set<string>>();
@@ -164,6 +203,7 @@ export async function registerRoutes(
         btwRate: number; 
         twinfieldAccount: string;
       }>();
+      const categoryItems = new Map<string, Map<string, { amount: number; count: number; dates: Set<string> }>>();
       let momenceTotalAll = 0;
       let nonStripeTotal = 0;
 
@@ -202,7 +242,7 @@ export async function registerRoutes(
             momenceCountByEmail.set(customerEmail, count + 1);
           }
           
-          const { category, btwRate, twinfieldAccount } = categorizeItem(item);
+          const { category, btwRate, twinfieldAccount } = categorizeItem(item, customCategories);
           const catData = categoryTotals.get(category) || { 
             count: 0, 
             total: 0, 
@@ -214,6 +254,18 @@ export async function registerRoutes(
           catData.total += saleValue;
           catData.totalTax += tax;
           categoryTotals.set(category, catData);
+          
+          // Track item details per category
+          const itemName = item || "Onbekend";
+          if (!categoryItems.has(category)) {
+            categoryItems.set(category, new Map());
+          }
+          const itemsMap = categoryItems.get(category)!;
+          const itemData = itemsMap.get(itemName) || { amount: 0, count: 0, dates: new Set<string>() };
+          itemData.amount += saleValue;
+          itemData.count++;
+          if (transactionDate) itemData.dates.add(transactionDate);
+          itemsMap.set(itemName, itemData);
         } else {
           nonStripeTotal += saleValue;
         }
@@ -267,6 +319,11 @@ export async function registerRoutes(
       let unmatchedCount = 0;
 
       for (const email of allEmails) {
+        // Skip excluded emails (studio's own email addresses)
+        if (EXCLUDED_EMAILS.includes(email.toLowerCase())) {
+          continue;
+        }
+        
         const momenceTotal = momenceByEmail.get(email) || 0;
         const stripeData = stripeByEmail.get(email) || { amount: 0, fee: 0 };
         const stripeNet = stripeData.amount - stripeData.fee;
@@ -359,6 +416,22 @@ export async function registerRoutes(
       }));
 
       await storage.addCategories(session.id, categories);
+
+      // Save category item details
+      const categoryItemsArray = Array.from(categoryItems.entries());
+      for (let i = 0; i < categoryItemsArray.length; i++) {
+        const [categoryName, itemsMap] = categoryItemsArray[i];
+        const itemsArray = Array.from(itemsMap.entries());
+        const items = itemsArray
+          .map((entry) => ({
+            item: entry[0],
+            amount: entry[1].amount,
+            count: entry[1].count,
+            date: Array.from(entry[1].dates).sort().join(', '),
+          }))
+          .sort((a, b) => b.amount - a.amount); // Sort by amount descending
+        await storage.addCategoryItems(session.id, categoryName, items);
+      }
 
       res.json({ success: true, sessionId: session.id });
     } catch (error) {
@@ -665,6 +738,52 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Download error:", error);
       res.status(500).json({ error: "Kon bestand niet genereren" });
+    }
+  });
+
+  // Settings endpoints for category configuration (using storage)
+  app.get("/api/settings/categories", async (req, res) => {
+    try {
+      const customCategories = await storage.getCategorySettings();
+      if (customCategories) {
+        res.json(customCategories);
+      } else {
+        const defaultCategories = Object.entries(REVENUE_CATEGORIES).map(([name, config]) => ({
+          name,
+          keywords: config.keywords,
+          btwRate: config.btwRate,
+          twinfieldAccount: config.twinfieldAccount,
+          group: config.group,
+        }));
+        res.json(defaultCategories);
+      }
+    } catch (error) {
+      console.error("Get categories error:", error);
+      res.status(500).json({ error: "Kon categorieën niet ophalen" });
+    }
+  });
+
+  app.post("/api/settings/categories", async (req, res) => {
+    try {
+      const settings = req.body;
+      if (!Array.isArray(settings)) {
+        return res.status(400).json({ error: "Ongeldige categorieën" });
+      }
+      await storage.saveCategorySettings(settings);
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Save categories error:", error);
+      res.status(500).json({ error: "Kon categorieën niet opslaan" });
+    }
+  });
+
+  app.post("/api/settings/categories/reset", async (req, res) => {
+    try {
+      await storage.resetCategorySettings();
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Reset categories error:", error);
+      res.status(500).json({ error: "Kon categorieën niet resetten" });
     }
   });
 

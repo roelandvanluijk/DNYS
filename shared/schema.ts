@@ -95,11 +95,22 @@ export type CustomerComparison = typeof customerComparison.$inferSelect;
 export type PaymentMethodSummary = typeof paymentMethodSummary.$inferSelect;
 export type CategorySummary = typeof categorySummary.$inferSelect;
 
+export interface CategoryItemDetail {
+  item: string;
+  amount: number;
+  count: number;
+  date?: string;
+}
+
+export interface CategoryWithDetails extends CategorySummary {
+  items?: CategoryItemDetail[];
+}
+
 export interface ReconciliationResult {
   session: ReconciliationSession;
   comparisons: CustomerComparison[];
   paymentMethods: PaymentMethodSummary[];
-  categories: CategorySummary[];
+  categories: CategoryWithDetails[];
 }
 
 export interface UploadResponse {
