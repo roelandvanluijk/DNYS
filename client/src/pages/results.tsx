@@ -136,12 +136,33 @@ function RevenueCategoryTable({ categories, title }: RevenueCategoryTableProps) 
   );
 }
 
+type ColumnKey = "email" | "items" | "date" | "count" | "momence" | "stripe" | "difference" | "status";
+
+interface ColumnConfig {
+  key: ColumnKey;
+  label: string;
+  defaultVisible: boolean;
+}
+
+const CUSTOMER_COLUMNS: ColumnConfig[] = [
+  { key: "email", label: "Email", defaultVisible: true },
+  { key: "items", label: "Producten", defaultVisible: false },
+  { key: "date", label: "Datum", defaultVisible: false },
+  { key: "count", label: "Aantal", defaultVisible: false },
+  { key: "momence", label: "Momence", defaultVisible: true },
+  { key: "stripe", label: "Stripe", defaultVisible: true },
+  { key: "difference", label: "Verschil", defaultVisible: true },
+  { key: "status", label: "Status", defaultVisible: true },
+];
+
 function CustomerTable({ 
   comparisons, 
-  filter 
+  filter,
+  visibleColumns,
 }: { 
   comparisons: CustomerComparison[]; 
   filter: "all" | "matched" | "differences";
+  visibleColumns: Set<ColumnKey>;
 }) {
   const filtered = comparisons.filter((c) => {
     if (filter === "all") return true;
@@ -163,34 +184,62 @@ function CustomerTable({
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead className="min-w-[200px]">Klant Email</TableHead>
-            <TableHead className="text-right">Momence</TableHead>
-            <TableHead className="text-right">Stripe</TableHead>
-            <TableHead className="text-right">Verschil</TableHead>
-            <TableHead className="text-right">Status</TableHead>
+            {visibleColumns.has("email") && <TableHead className="min-w-[200px]">Klant Email</TableHead>}
+            {visibleColumns.has("items") && <TableHead className="min-w-[200px]">Producten</TableHead>}
+            {visibleColumns.has("date") && <TableHead className="min-w-[120px]">Datum</TableHead>}
+            {visibleColumns.has("count") && <TableHead className="text-right">Aantal</TableHead>}
+            {visibleColumns.has("momence") && <TableHead className="text-right">Momence</TableHead>}
+            {visibleColumns.has("stripe") && <TableHead className="text-right">Stripe</TableHead>}
+            {visibleColumns.has("difference") && <TableHead className="text-right">Verschil</TableHead>}
+            {visibleColumns.has("status") && <TableHead className="text-right">Status</TableHead>}
           </TableRow>
         </TableHeader>
         <TableBody>
           {filtered.map((comparison) => (
             <TableRow key={comparison.id} data-testid={`row-customer-${comparison.id}`}>
-              <TableCell className="font-medium truncate max-w-[200px]">
-                {comparison.customerEmail || "—"}
-              </TableCell>
-              <TableCell className="text-right font-mono text-sm">
-                {formatCurrency(comparison.momenceTotal)}
-              </TableCell>
-              <TableCell className="text-right font-mono text-sm">
-                {formatCurrency(comparison.stripeAmount)}
-              </TableCell>
-              <TableCell className={`text-right font-mono text-sm ${
-                (comparison.difference ?? 0) > 0 ? "text-chart-2" : 
-                (comparison.difference ?? 0) < 0 ? "text-destructive" : ""
-              }`}>
-                {formatCurrency(comparison.difference)}
-              </TableCell>
-              <TableCell className="text-right">
-                {getStatusBadge(comparison.matchStatus || "unknown")}
-              </TableCell>
+              {visibleColumns.has("email") && (
+                <TableCell className="font-medium truncate max-w-[200px]">
+                  {comparison.customerEmail || "—"}
+                </TableCell>
+              )}
+              {visibleColumns.has("items") && (
+                <TableCell className="text-sm truncate max-w-[200px]" title={comparison.items || ""}>
+                  {comparison.items || "—"}
+                </TableCell>
+              )}
+              {visibleColumns.has("date") && (
+                <TableCell className="text-sm">
+                  {comparison.transactionDate || "—"}
+                </TableCell>
+              )}
+              {visibleColumns.has("count") && (
+                <TableCell className="text-right text-sm">
+                  {comparison.transactionCount || 0}
+                </TableCell>
+              )}
+              {visibleColumns.has("momence") && (
+                <TableCell className="text-right font-mono text-sm">
+                  {formatCurrency(comparison.momenceTotal)}
+                </TableCell>
+              )}
+              {visibleColumns.has("stripe") && (
+                <TableCell className="text-right font-mono text-sm">
+                  {formatCurrency(comparison.stripeAmount)}
+                </TableCell>
+              )}
+              {visibleColumns.has("difference") && (
+                <TableCell className={`text-right font-mono text-sm ${
+                  (comparison.difference ?? 0) > 0 ? "text-chart-2" : 
+                  (comparison.difference ?? 0) < 0 ? "text-destructive" : ""
+                }`}>
+                  {formatCurrency(comparison.difference)}
+                </TableCell>
+              )}
+              {visibleColumns.has("status") && (
+                <TableCell className="text-right">
+                  {getStatusBadge(comparison.matchStatus || "unknown")}
+                </TableCell>
+              )}
             </TableRow>
           ))}
         </TableBody>
@@ -262,6 +311,25 @@ export default function ResultsPage() {
   const [filter, setFilter] = useState<"all" | "matched" | "differences">("all");
   const [showPaymentMethods, setShowPaymentMethods] = useState(false);
   const [showCustomers, setShowCustomers] = useState(false);
+  const [visibleColumns, setVisibleColumns] = useState<Set<ColumnKey>>(() => {
+    const initial = new Set<ColumnKey>();
+    CUSTOMER_COLUMNS.forEach(col => {
+      if (col.defaultVisible) initial.add(col.key);
+    });
+    return initial;
+  });
+
+  const toggleColumn = (key: ColumnKey) => {
+    setVisibleColumns(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
+  };
 
   const { data, isLoading, error } = useQuery<ReconciliationResult>({
     queryKey: ["/api/sessions", params.sessionId],
@@ -495,7 +563,7 @@ export default function ResultsPage() {
               </CardHeader>
               {showCustomers && (
                 <CardContent className="pt-4">
-                  <div className="mb-4">
+                  <div className="mb-4 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
                     <Tabs value={filter} onValueChange={(v) => setFilter(v as typeof filter)}>
                       <TabsList>
                         <TabsTrigger value="all" data-testid="tab-all">
@@ -509,8 +577,26 @@ export default function ResultsPage() {
                         </TabsTrigger>
                       </TabsList>
                     </Tabs>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-sm text-muted-foreground mr-1">Kolommen:</span>
+                      {CUSTOMER_COLUMNS.map(col => (
+                        <label
+                          key={col.key}
+                          className="flex items-center gap-1.5 text-sm cursor-pointer"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={visibleColumns.has(col.key)}
+                            onChange={() => toggleColumn(col.key)}
+                            className="rounded border-border"
+                            data-testid={`checkbox-column-${col.key}`}
+                          />
+                          <span>{col.label}</span>
+                        </label>
+                      ))}
+                    </div>
                   </div>
-                  <CustomerTable comparisons={data.comparisons} filter={filter} />
+                  <CustomerTable comparisons={data.comparisons} filter={filter} visibleColumns={visibleColumns} />
                 </CardContent>
               )}
             </Card>

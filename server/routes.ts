@@ -153,6 +153,9 @@ export async function registerRoutes(
       });
 
       const momenceByEmail = new Map<string, number>();
+      const momenceItemsByEmail = new Map<string, Set<string>>();
+      const momenceDatesByEmail = new Map<string, Set<string>>();
+      const momenceCountByEmail = new Map<string, number>();
       const paymentMethodTotals = new Map<string, { count: number; total: number; isStripe: boolean }>();
       const categoryTotals = new Map<string, { 
         count: number; 
@@ -170,6 +173,7 @@ export async function registerRoutes(
         const tax = parseNumber(row.Tax);
         const customerEmail = normalizeEmail(row["Customer email"]);
         const item = row.Item || "";
+        const transactionDate = row["Date"] || "";
 
         const isStripeMethod = STRIPE_PAYMENT_METHODS.some(
           (m) => paymentMethod.toLowerCase().includes(m.toLowerCase())
@@ -185,6 +189,17 @@ export async function registerRoutes(
           if (customerEmail) {
             const current = momenceByEmail.get(customerEmail) || 0;
             momenceByEmail.set(customerEmail, current + saleValue);
+            
+            const items = momenceItemsByEmail.get(customerEmail) || new Set<string>();
+            if (item) items.add(item);
+            momenceItemsByEmail.set(customerEmail, items);
+            
+            const dates = momenceDatesByEmail.get(customerEmail) || new Set<string>();
+            if (transactionDate) dates.add(transactionDate);
+            momenceDatesByEmail.set(customerEmail, dates);
+            
+            const count = momenceCountByEmail.get(customerEmail) || 0;
+            momenceCountByEmail.set(customerEmail, count + 1);
           }
           
           const { category, btwRate, twinfieldAccount } = categorizeItem(item);
@@ -243,6 +258,9 @@ export async function registerRoutes(
         stripeNet: number;
         difference: number;
         matchStatus: MatchStatus;
+        items: string;
+        transactionDate: string;
+        transactionCount: number;
       }> = [];
 
       let matchedCount = 0;
@@ -269,6 +287,10 @@ export async function registerRoutes(
           unmatchedCount++;
         }
 
+        const customerItems = momenceItemsByEmail.get(email);
+        const customerDates = momenceDatesByEmail.get(email);
+        const customerCount = momenceCountByEmail.get(email) || 0;
+
         comparisons.push({
           sessionId: "",
           customerEmail: email,
@@ -278,6 +300,9 @@ export async function registerRoutes(
           stripeNet,
           difference,
           matchStatus,
+          items: customerItems ? Array.from(customerItems).join(", ") : "",
+          transactionDate: customerDates ? Array.from(customerDates).join(", ") : "",
+          transactionCount: customerCount,
         });
       }
 

@@ -55,6 +55,9 @@ export const customerComparison = pgTable("customer_comparison", {
   stripeNet: real("stripe_net").default(0),
   difference: real("difference").default(0),
   matchStatus: text("match_status"),
+  items: text("items"),
+  transactionDate: text("transaction_date"),
+  transactionCount: integer("transaction_count").default(0),
 });
 
 export const paymentMethodSummary = pgTable("payment_method_summary", {
