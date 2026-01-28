@@ -40,7 +40,7 @@ interface ContinueResponse {
 }
 
 const CATEGORIES = [
-  { name: "Online/Livestream", btwRate: 0.09, twinfield: "8200" },
+  { name: "Online/Livestream", btwRate: 0.21, twinfield: "8200" },
   { name: "Opleidingen", btwRate: 0.21, twinfield: "8300" },
   { name: "Jaarabonnementen", btwRate: 0.09, twinfield: "8101" },
   { name: "Gift Cards", btwRate: 0.00, twinfield: "8900" },

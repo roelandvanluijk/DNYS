@@ -81,7 +81,7 @@ Old format: `Amount`, `Fee`, `Customer Email`, `Status`
 
 | # | Category | BTW | Twinfield | Special Handling |
 |---|----------|-----|-----------|------------------|
-| 1 | **Online/Livestream** | 9% | 8200 | Priority rule (overrides others) |
+| 1 | **Online/Livestream** | 21% | 8200 | Priority rule (overrides others) |
 | 2 | **Opleidingen** | 21% | 8300 | Accrual over multiple months |
 | 3 | **Jaarabonnementen** | 9% | 8101 | Spread over 12 months |
 | 4 | **Gift Cards** | 0% | 8900 | Separate from credits |

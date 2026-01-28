@@ -177,7 +177,7 @@ export interface CategoryConfigWithSpecial extends CategoryConfig {
 export const REVENUE_CATEGORIES: Record<string, CategoryConfigWithSpecial> = {
   'Online/Livestream': {
     keywords: ['livestream', 'online', 'virtual'],
-    btwRate: 0.09,
+    btwRate: 0.21,
     twinfieldAccount: '8200',
     group: 'yoga',
     priority: 1,
