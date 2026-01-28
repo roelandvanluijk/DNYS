@@ -12,9 +12,13 @@ export const productSettings = pgTable("product_settings", {
   hasAccrual: boolean("has_accrual").default(false),
   accrualMonths: integer("accrual_months"),
   accrualStartOffset: integer("accrual_start_offset").default(0),
+  accrualStartDate: text("accrual_start_date"),
+  accrualEndDate: text("accrual_end_date"),
   
   hasSpread: boolean("has_spread").default(false),
   spreadMonths: integer("spread_months").default(12),
+  spreadStartDate: text("spread_start_date"),
+  spreadEndDate: text("spread_end_date"),
   
   firstSeenDate: text("first_seen_date"),
   lastSeenDate: text("last_seen_date"),

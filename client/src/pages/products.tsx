@@ -95,8 +95,12 @@ export default function ProductsPage() {
       twinfieldAccount: product.twinfieldAccount,
       hasAccrual: product.hasAccrual,
       accrualMonths: product.accrualMonths,
+      accrualStartDate: product.accrualStartDate || "",
+      accrualEndDate: product.accrualEndDate || "",
       hasSpread: product.hasSpread,
       spreadMonths: product.spreadMonths,
+      spreadStartDate: product.spreadStartDate || "",
+      spreadEndDate: product.spreadEndDate || "",
     });
   };
 
@@ -267,30 +271,65 @@ export default function ProductsPage() {
                               <Label className="text-sm">Accrual inschakelen</Label>
                             </div>
                             {editForm.hasAccrual && (
-                              <div className="ml-6">
-                                <Label className="text-sm">Aantal maanden</Label>
-                                <Input
-                                  type="number"
-                                  min={1}
-                                  max={36}
-                                  value={editForm.accrualMonths || 14}
-                                  onChange={(e) => setEditForm(prev => ({ ...prev, accrualMonths: parseInt(e.target.value) || 14 }))}
-                                  className="mt-1 w-24"
-                                />
+                              <div className="ml-6 space-y-2">
+                                <div className="grid grid-cols-2 gap-2">
+                                  <div>
+                                    <Label className="text-sm">Startdatum</Label>
+                                    <Input
+                                      type="date"
+                                      value={editForm.accrualStartDate || ""}
+                                      onChange={(e) => setEditForm(prev => ({ ...prev, accrualStartDate: e.target.value }))}
+                                      className="mt-1"
+                                    />
+                                  </div>
+                                  <div>
+                                    <Label className="text-sm">Einddatum</Label>
+                                    <Input
+                                      type="date"
+                                      value={editForm.accrualEndDate || ""}
+                                      onChange={(e) => setEditForm(prev => ({ ...prev, accrualEndDate: e.target.value }))}
+                                      className="mt-1"
+                                    />
+                                  </div>
+                                </div>
                               </div>
                             )}
                           </div>
                         )}
 
                         {editForm.category === "Jaarabonnementen" && (
-                          <div className="p-3 rounded bg-accent/30">
+                          <div className="p-3 rounded bg-accent/30 space-y-2">
                             <div className="flex items-center gap-2">
                               <Checkbox
                                 checked={editForm.hasSpread || false}
                                 onCheckedChange={(checked) => setEditForm(prev => ({ ...prev, hasSpread: checked === true }))}
                               />
-                              <Label className="text-sm">Spreid over 12 maanden</Label>
+                              <Label className="text-sm">Spreiding inschakelen</Label>
                             </div>
+                            {editForm.hasSpread && (
+                              <div className="ml-6 space-y-2">
+                                <div className="grid grid-cols-2 gap-2">
+                                  <div>
+                                    <Label className="text-sm">Startdatum</Label>
+                                    <Input
+                                      type="date"
+                                      value={editForm.spreadStartDate || ""}
+                                      onChange={(e) => setEditForm(prev => ({ ...prev, spreadStartDate: e.target.value }))}
+                                      className="mt-1"
+                                    />
+                                  </div>
+                                  <div>
+                                    <Label className="text-sm">Einddatum</Label>
+                                    <Input
+                                      type="date"
+                                      value={editForm.spreadEndDate || ""}
+                                      onChange={(e) => setEditForm(prev => ({ ...prev, spreadEndDate: e.target.value }))}
+                                      className="mt-1"
+                                    />
+                                  </div>
+                                </div>
+                              </div>
+                            )}
                           </div>
                         )}
                       </div>
@@ -310,10 +349,16 @@ export default function ProductsPage() {
                             </span>
                           </div>
                           <div className="flex items-center gap-3 mt-1 text-sm text-muted-foreground">
-                            {product.hasAccrual && (
-                              <span>Accrual: {product.accrualMonths} maanden</span>
+                            {product.hasAccrual && product.accrualStartDate && product.accrualEndDate && (
+                              <span>Accrual: {product.accrualStartDate} t/m {product.accrualEndDate}</span>
                             )}
-                            {product.hasSpread && (
+                            {product.hasAccrual && !product.accrualStartDate && (
+                              <span>Accrual: {product.accrualMonths || 14} maanden</span>
+                            )}
+                            {product.hasSpread && product.spreadStartDate && product.spreadEndDate && (
+                              <span>Spreiding: {product.spreadStartDate} t/m {product.spreadEndDate}</span>
+                            )}
+                            {product.hasSpread && !product.spreadStartDate && (
                               <span>Gespreid over 12 maanden</span>
                             )}
                             <span>{product.transactionCount || 0} transacties</span>

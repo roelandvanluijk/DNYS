@@ -427,10 +427,17 @@ export default function ResultsPage() {
     );
   }
 
-  const yogaCategories = data?.categories.filter(c => {
-    const yogaCats = ['Opleidingen', 'Online/Livestream', 'Gift Cards & Credits', 'Workshops & Events', 'Abonnementen', 'Rittenkaarten', 'Single Classes', 'Overig'];
-    return yogaCats.includes(c.category);
-  }) || [];
+  const yogaCatOrder = ['Opleidingen', 'Jaarabonnementen', 'Online/Livestream', 'Gift Cards', 'Money Credits', 'Workshops & Events', 'Abonnementen', 'Rittenkaarten', 'Single Classes', 'Overig'];
+  const yogaCategories = data?.categories
+    .filter(c => {
+      const yogaCats = ['Opleidingen', 'Jaarabonnementen', 'Online/Livestream', 'Gift Cards', 'Money Credits', 'Gift Cards & Credits', 'Workshops & Events', 'Abonnementen', 'Rittenkaarten', 'Single Classes', 'Overig'];
+      return yogaCats.includes(c.category);
+    })
+    .sort((a, b) => {
+      const aIndex = yogaCatOrder.indexOf(a.category);
+      const bIndex = yogaCatOrder.indexOf(b.category);
+      return (aIndex === -1 ? 999 : aIndex) - (bIndex === -1 ? 999 : bIndex);
+    }) || [];
 
   const horecaCategories = data?.categories.filter(c => {
     const horecaCats = ['Omzet Keuken', 'Omzet Drank Laag', 'Omzet Drank Hoog'];

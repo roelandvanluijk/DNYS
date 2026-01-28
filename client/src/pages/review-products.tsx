@@ -25,8 +25,18 @@ interface ProductEdit extends NewProductSuggestion {
   category: string;
   hasAccrual: boolean;
   accrualMonths: number;
+  accrualStartDate: string;
+  accrualEndDate: string;
   hasSpread: boolean;
   spreadMonths: number;
+  spreadStartDate: string;
+  spreadEndDate: string;
+}
+
+interface ContinueResponse {
+  success: boolean;
+  sessionId?: string;
+  error?: string;
 }
 
 const CATEGORIES = [
@@ -82,8 +92,12 @@ export default function ReviewProductsPage() {
         category: p.suggestedCategory,
         hasAccrual: p.specialHandling === 'accrual',
         accrualMonths: p.specialHandling === 'accrual' ? 14 : 0,
+        accrualStartDate: "",
+        accrualEndDate: "",
         hasSpread: p.specialHandling === 'spread_12',
         spreadMonths: 12,
+        spreadStartDate: "",
+        spreadEndDate: "",
       }));
       
       setProducts(editableProducts);
@@ -130,8 +144,12 @@ export default function ReviewProductsPage() {
         hasAccrual: p.hasAccrual,
         accrualMonths: p.hasAccrual ? p.accrualMonths : null,
         accrualStartOffset: 0,
+        accrualStartDate: p.hasAccrual && p.accrualStartDate ? p.accrualStartDate : null,
+        accrualEndDate: p.hasAccrual && p.accrualEndDate ? p.accrualEndDate : null,
         hasSpread: p.hasSpread,
         spreadMonths: p.hasSpread ? p.spreadMonths : 12,
+        spreadStartDate: p.hasSpread && p.spreadStartDate ? p.spreadStartDate : null,
+        spreadEndDate: p.hasSpread && p.spreadEndDate ? p.spreadEndDate : null,
         transactionCount: p.transactionCount,
       }));
 
@@ -142,7 +160,7 @@ export default function ReviewProductsPage() {
         description: "Nu wordt de reconciliatie voortgezet...",
       });
 
-      const continueResponse = await apiRequest("POST", `/api/reconcile/continue/${tempSessionId}`);
+      const continueResponse = await apiRequest("POST", `/api/reconcile/continue/${tempSessionId}`) as unknown as ContinueResponse;
       
       sessionStorage.removeItem("newProductsData");
       
@@ -289,20 +307,34 @@ export default function ReviewProductsPage() {
                         </Label>
                       </div>
                       {product.hasAccrual && (
-                        <div className="ml-6">
-                          <Label className="text-sm">Aantal maanden</Label>
-                          <Input
-                            type="number"
-                            min={1}
-                            max={36}
-                            value={product.accrualMonths}
-                            onChange={(e) => updateProduct(index, { accrualMonths: parseInt(e.target.value) || 14 })}
-                            className="mt-1.5 w-32"
-                            data-testid={`input-accrual-months-${index}`}
-                          />
-                          <p className="text-xs text-muted-foreground mt-1">
-                            {formatCurrency(product.totalAmount / (product.accrualMonths || 1))} per maand
-                          </p>
+                        <div className="ml-6 space-y-3">
+                          <div className="grid grid-cols-2 gap-3">
+                            <div>
+                              <Label className="text-sm">Startdatum</Label>
+                              <Input
+                                type="date"
+                                value={product.accrualStartDate}
+                                onChange={(e) => updateProduct(index, { accrualStartDate: e.target.value })}
+                                className="mt-1.5"
+                                data-testid={`input-accrual-start-${index}`}
+                              />
+                            </div>
+                            <div>
+                              <Label className="text-sm">Einddatum</Label>
+                              <Input
+                                type="date"
+                                value={product.accrualEndDate}
+                                onChange={(e) => updateProduct(index, { accrualEndDate: e.target.value })}
+                                className="mt-1.5"
+                                data-testid={`input-accrual-end-${index}`}
+                              />
+                            </div>
+                          </div>
+                          {product.accrualStartDate && product.accrualEndDate && (
+                            <p className="text-xs text-muted-foreground">
+                              Omzet wordt verdeeld over de opgegeven periode
+                            </p>
+                          )}
                         </div>
                       )}
                     </div>
@@ -318,13 +350,39 @@ export default function ReviewProductsPage() {
                           data-testid={`checkbox-spread-${index}`}
                         />
                         <Label htmlFor={`spread-${index}`} className="text-sm font-medium">
-                          Spreid over 12 maanden
+                          Spreiding over periode
                         </Label>
                       </div>
                       {product.hasSpread && (
-                        <p className="text-xs text-muted-foreground ml-6">
-                          {formatCurrency(product.totalAmount / 12)} per maand
-                        </p>
+                        <div className="ml-6 space-y-3">
+                          <div className="grid grid-cols-2 gap-3">
+                            <div>
+                              <Label className="text-sm">Startdatum</Label>
+                              <Input
+                                type="date"
+                                value={product.spreadStartDate}
+                                onChange={(e) => updateProduct(index, { spreadStartDate: e.target.value })}
+                                className="mt-1.5"
+                                data-testid={`input-spread-start-${index}`}
+                              />
+                            </div>
+                            <div>
+                              <Label className="text-sm">Einddatum</Label>
+                              <Input
+                                type="date"
+                                value={product.spreadEndDate}
+                                onChange={(e) => updateProduct(index, { spreadEndDate: e.target.value })}
+                                className="mt-1.5"
+                                data-testid={`input-spread-end-${index}`}
+                              />
+                            </div>
+                          </div>
+                          {product.spreadStartDate && product.spreadEndDate && (
+                            <p className="text-xs text-muted-foreground">
+                              Omzet wordt verdeeld over de opgegeven periode
+                            </p>
+                          )}
+                        </div>
                       )}
                     </div>
                   )}

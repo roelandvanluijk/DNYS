@@ -162,6 +162,13 @@ Old format: `Amount`, `Fee`, `Customer Email`, `Status`
 - New product detection workflow - alerts user to new products before processing
 - Review Products page (/review-products) for confirming new product categorization
 - Product Management page (/products) for viewing/editing all stored products
-- Accrual support for Opleidingen (configurable months, e.g., 14 months for Ademcoach)
-- Revenue spreading for Jaarabonnementen (spread over 12 months)
+- Accrual support for Opleidingen with date-based calculation (startDate, endDate)
+- Revenue spreading for Jaarabonnementen with date-based calculation
 - Products remembered for future reconciliations - automatic recognition
+
+**January 2026: Date-Based Accrual System**
+- Changed accrual system from months to dates (accrualStartDate, accrualEndDate)
+- Changed spread system from months to dates (spreadStartDate, spreadEndDate)
+- Opleidingen category now displayed FIRST in results, followed by other categories
+- Category order in results: Opleidingen, Jaarabonnementen, Online/Livestream, then others
+- Date inputs in review-products and products pages for configuring accrual periods
