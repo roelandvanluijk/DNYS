@@ -7,6 +7,8 @@ import UploadPage from "@/pages/upload";
 import ResultsPage from "@/pages/results";
 import SessionsPage from "@/pages/sessions";
 import SettingsPage from "@/pages/settings";
+import ReviewProductsPage from "@/pages/review-products";
+import ProductsPage from "@/pages/products";
 import NotFound from "@/pages/not-found";
 
 function Router() {
@@ -16,6 +18,8 @@ function Router() {
       <Route path="/results/:sessionId" component={ResultsPage} />
       <Route path="/sessions" component={SessionsPage} />
       <Route path="/settings" component={SettingsPage} />
+      <Route path="/review-products" component={ReviewProductsPage} />
+      <Route path="/products" component={ProductsPage} />
       <Route component={NotFound} />
     </Switch>
   );

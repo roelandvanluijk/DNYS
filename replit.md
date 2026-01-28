@@ -1,18 +1,28 @@
 # DNYS Reconciliatie Tool
 
 ## Overview
-A web application for reconciling Momence (yoga booking system) payments with Stripe payment data for De Nieuwe Yogaschool (Amsterdam yoga studio).
+A comprehensive revenue management tool for De Nieuwe Yogaschool (Amsterdam yoga studio) with:
 
-**PRIMARY GOAL (80%)**: Automatically categorize revenue into 11 accounting categories with BTW rates and Twinfield codes
-**SECONDARY GOAL (20%)**: Verify Stripe payments match Momence totals
+**PRIMARY FEATURES:**
+1. **Automatic revenue categorization** into 12 accounting categories
+2. **Product database with memory** - remembers all products and their settings
+3. **New product detection** with user review workflow
+4. **Accrual management** for Opleidingen (training programs)
+5. **Revenue spreading** for Jaarabonnementen (yearly memberships)
+6. **Stripe reconciliation** with detailed transaction drill-down
+
+**SECONDARY:** Verify Stripe payments match Momence totals
 
 ## What the Tool Does
 1. User uploads 2 CSV files: Momence export and Stripe export
-2. Tool aggregates transactions by customer email
-3. Categorizes revenue by item type into 11 categories with BTW and Twinfield codes
-4. Compares totals between systems
-5. Identifies matches and discrepancies
-6. Generates Excel report with 5 sheets including BTW summary
+2. Tool checks for new products not in the database
+3. If new products found, user reviews and confirms categorization
+4. Products are saved to PostgreSQL database for future recognition
+5. Categorizes revenue by item type into 12 categories with BTW and Twinfield codes
+6. Applies accrual/spread logic for Opleidingen and Jaarabonnementen
+7. Compares totals between systems (aggregated by customer email)
+8. Identifies matches and discrepancies
+9. Generates Excel report with 5 sheets including BTW summary
 
 ## Technical Stack
 - Frontend: React with TypeScript, TanStack Query, Wouter routing
@@ -67,22 +77,23 @@ Old format: `Amount`, `Fee`, `Customer Email`, `Status`
 ### Momence CSV Column Names:
 - "Sale value", "Customer email", "Payment method", "Item", "Tax"
 
-### Revenue Categories (11 total, with priority order)
+### Revenue Categories (12 total, priority order)
 
-**Yoga & Studio Services:**
-1. **Opleidingen** - 21% BTW, Twinfield 8300 (teacher training, opleiding, 200 uur)
-2. **Online/Livestream** - 9% BTW, Twinfield 8200 (livestream, online)
-3. **Gift Cards & Credits** - 0% BTW, Twinfield 8900 (gift card, money credit)
-4. **Workshops & Events** - 9% BTW, Twinfield 8150 (workshop, ceremony, retreat)
-5. **Abonnementen** - 9% BTW, Twinfield 8100 (membership, unlimited)
-6. **Rittenkaarten** - 9% BTW, Twinfield 8110 (class card, rittenkaart)
-7. **Single Classes** - 9% BTW, Twinfield 8120 (yoga, flow, yin, meditation)
-
-**Horeca / Café:**
-8. **Omzet Keuken** - 9% BTW, Twinfield 8001 (brownie, bananenbrood, quiche)
-9. **Omzet Drank Laag** - 9% BTW, Twinfield 8002 (coffee, tea, smoothie)
-10. **Omzet Drank Hoog** - 21% BTW, Twinfield 8003 (beer, wine, alcohol)
-11. **Overig** - 9% BTW, Twinfield 8999 (catch-all)
+| # | Category | BTW | Twinfield | Special Handling |
+|---|----------|-----|-----------|------------------|
+| 1 | **Online/Livestream** | 9% | 8200 | Priority rule (overrides others) |
+| 2 | **Opleidingen** | 21% | 8300 | Accrual over multiple months |
+| 3 | **Jaarabonnementen** | 9% | 8101 | Spread over 12 months |
+| 4 | **Gift Cards** | 0% | 8900 | Separate from credits |
+| 5 | **Money Credits** | 0% | 8901 | Separate from cards |
+| 6 | **Workshops & Events** | 9% | 8150 | Regular |
+| 7 | **Abonnementen** | 9% | 8100 | Monthly memberships |
+| 8 | **Rittenkaarten** | 9% | 8110 | Class cards |
+| 9 | **Omzet Keuken** | 9% | 8001 | Food items |
+| 10 | **Omzet Drank Laag** | 9% | 8002 | Non-alcoholic drinks |
+| 11 | **Omzet Drank Hoog** | 21% | 8003 | Alcoholic drinks |
+| 12 | **Single Classes** | 9% | 8120 | Drop-in yoga classes |
+| 13 | **Overig** | 9% | 8999 | Catch-all |
 
 ### Reconciliation Method:
 **Aggregate by customer email, NOT line-by-line matching**
@@ -144,3 +155,13 @@ Old format: `Amount`, `Fee`, `Customer Email`, `Status`
 - Created Settings page (/settings) to customize Twinfield codes, BTW rates, and keywords
 - Excluded info@denieuweyogaschool.nl from customer comparisons (studio's own email)
 - Added column chooser to customer comparison table (Email, Producten, Datum, Aantal, Momence, Stripe, Verschil, Status)
+
+**January 2026: Product Database & Advanced Features**
+- Added PostgreSQL database for product_settings table (product memory)
+- Updated to 12 revenue categories (split Gift Cards and Money Credits)
+- New product detection workflow - alerts user to new products before processing
+- Review Products page (/review-products) for confirming new product categorization
+- Product Management page (/products) for viewing/editing all stored products
+- Accrual support for Opleidingen (configurable months, e.g., 14 months for Ademcoach)
+- Revenue spreading for Jaarabonnementen (spread over 12 months)
+- Products remembered for future reconciliations - automatic recognition

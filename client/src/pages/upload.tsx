@@ -72,7 +72,20 @@ export default function UploadPage() {
 
       const data = await response.json();
 
-      if (data.success && data.sessionId) {
+      if (data.success && data.needsReview) {
+        toast({
+          title: "Nieuwe producten gevonden",
+          description: `${data.newProductCount} nieuwe producten moeten worden beoordeeld.`,
+        });
+        sessionStorage.setItem("newProductsData", JSON.stringify({
+          tempSessionId: data.tempSessionId,
+          newProducts: data.newProducts,
+          period,
+          momenceFileName: momenceFile.name,
+          stripeFileName: stripeFile.name,
+        }));
+        navigate("/review-products");
+      } else if (data.success && data.sessionId) {
         toast({
           title: "Verwerking voltooid",
           description: "Je resultaten zijn klaar om te bekijken.",
@@ -109,20 +122,29 @@ export default function UploadPage() {
               </h1>
             </div>
           </div>
-          <Button 
-            variant="ghost" 
-            onClick={() => navigate("/sessions")}
-            data-testid="link-sessions"
-          >
-            Eerdere sessies
-          </Button>
-          <Button 
-            variant="ghost" 
-            onClick={() => navigate("/settings")}
-            data-testid="link-settings"
-          >
-            Instellingen
-          </Button>
+          <div className="flex gap-2">
+            <Button 
+              variant="ghost" 
+              onClick={() => navigate("/sessions")}
+              data-testid="link-sessions"
+            >
+              Eerdere sessies
+            </Button>
+            <Button 
+              variant="ghost" 
+              onClick={() => navigate("/products")}
+              data-testid="link-products"
+            >
+              Producten
+            </Button>
+            <Button 
+              variant="ghost" 
+              onClick={() => navigate("/settings")}
+              data-testid="link-settings"
+            >
+              Instellingen
+            </Button>
+          </div>
         </div>
       </header>
 

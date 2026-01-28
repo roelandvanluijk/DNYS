@@ -1,6 +1,40 @@
-import { pgTable, text, varchar, real, integer, timestamp } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, real, integer, timestamp, boolean, serial } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
+
+export const productSettings = pgTable("product_settings", {
+  id: serial("id").primaryKey(),
+  itemName: text("item_name").notNull().unique(),
+  category: text("category").notNull(),
+  btwRate: real("btw_rate").notNull().default(0.09),
+  twinfieldAccount: text("twinfield_account"),
+  
+  hasAccrual: boolean("has_accrual").default(false),
+  accrualMonths: integer("accrual_months"),
+  accrualStartOffset: integer("accrual_start_offset").default(0),
+  
+  hasSpread: boolean("has_spread").default(false),
+  spreadMonths: integer("spread_months").default(12),
+  
+  firstSeenDate: text("first_seen_date"),
+  lastSeenDate: text("last_seen_date"),
+  transactionCount: integer("transaction_count").default(0),
+  
+  isReviewed: boolean("is_reviewed").default(false),
+  needsReview: boolean("needs_review").default(true),
+  
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertProductSettingsSchema = createInsertSchema(productSettings).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type InsertProductSettings = z.infer<typeof insertProductSettingsSchema>;
+export type ProductSettings = typeof productSettings.$inferSelect;
 
 export const reconciliationSessions = pgTable("reconciliation_sessions", {
   id: varchar("id").primaryKey(),
@@ -131,47 +165,74 @@ export interface CategoryConfig {
   group: "yoga" | "horeca";
 }
 
-export const REVENUE_CATEGORIES: Record<string, CategoryConfig> = {
-  'Opleidingen': {
-    keywords: [
-      'opleiding', 'teacher training', '200 uur', 'ademcoach',
-      'yogatherapie', 'meditatie tot zelfrealisatie', 'schoolverlichting',
-      'facilitator', 'certification', '300 uur', 'yin yoga training'
-    ],
-    btwRate: 0.21,
-    twinfieldAccount: '8300',
-    group: 'yoga',
-  },
+export interface CategoryConfigWithSpecial extends CategoryConfig {
+  specialHandling?: 'accrual' | 'spread_12' | null;
+  priority: number;
+}
+
+export const REVENUE_CATEGORIES: Record<string, CategoryConfigWithSpecial> = {
   'Online/Livestream': {
     keywords: ['livestream', 'online', 'virtual'],
     btwRate: 0.09,
     twinfieldAccount: '8200',
     group: 'yoga',
+    priority: 1,
   },
-  'Gift Cards & Credits': {
-    keywords: ['gift card', 'money credit', 'tegoed', 'voucher', 'cadeaukaart'],
+  'Opleidingen': {
+    keywords: [
+      'opleiding', 'teacher training', '200 uur', 'ademcoach',
+      'yogatherapie', 'meditatie tot zelfrealisatie', 'schoolverlichting',
+      'facilitator', 'certification', '300 uur', 'yin yoga training',
+      'pilates teacher training'
+    ],
+    btwRate: 0.21,
+    twinfieldAccount: '8300',
+    group: 'yoga',
+    specialHandling: 'accrual',
+    priority: 2,
+  },
+  'Jaarabonnementen': {
+    keywords: ['year membership', 'yearly membership', 'jaar abonnement', 'jaarlidmaatschap'],
+    btwRate: 0.09,
+    twinfieldAccount: '8101',
+    group: 'yoga',
+    specialHandling: 'spread_12',
+    priority: 3,
+  },
+  'Gift Cards': {
+    keywords: ['gift card', 'cadeaukaart', 'voucher'],
     btwRate: 0.00,
     twinfieldAccount: '8900',
     group: 'yoga',
+    priority: 4,
+  },
+  'Money Credits': {
+    keywords: ['money credit', 'tegoed', 'credit'],
+    btwRate: 0.00,
+    twinfieldAccount: '8901',
+    group: 'yoga',
+    priority: 5,
   },
   'Workshops & Events': {
     keywords: [
       'workshop', 'ceremony', 'cacao', 'tantra', 'truffle',
       'retreat', 'circle', 'event', 'face yoga', 'new year',
-      'sound bath', 'gong', 'kirtan'
+      'sound bath', 'gong', 'kirtan', 'sound healing'
     ],
     btwRate: 0.09,
     twinfieldAccount: '8150',
     group: 'yoga',
+    priority: 6,
   },
   'Abonnementen': {
     keywords: [
       'membership', 'unlimited', 'abonnement', 'lidmaatschap', 'doorlopend',
-      'monthly', 'maandelijks', 'yearly', 'jaarlijks'
+      'monthly', 'maandelijks'
     ],
     btwRate: 0.09,
     twinfieldAccount: '8100',
     group: 'yoga',
+    priority: 7,
   },
   'Rittenkaarten': {
     keywords: [
@@ -181,6 +242,7 @@ export const REVENUE_CATEGORIES: Record<string, CategoryConfig> = {
     btwRate: 0.09,
     twinfieldAccount: '8110',
     group: 'yoga',
+    priority: 8,
   },
   'Omzet Keuken': {
     keywords: [
@@ -191,6 +253,7 @@ export const REVENUE_CATEGORIES: Record<string, CategoryConfig> = {
     btwRate: 0.09,
     twinfieldAccount: '8001',
     group: 'horeca',
+    priority: 9,
   },
   'Omzet Drank Laag': {
     keywords: [
@@ -203,12 +266,14 @@ export const REVENUE_CATEGORIES: Record<string, CategoryConfig> = {
     btwRate: 0.09,
     twinfieldAccount: '8002',
     group: 'horeca',
+    priority: 10,
   },
   'Omzet Drank Hoog': {
     keywords: ['beer', 'wine', 'alcohol', 'bier', 'wijn'],
     btwRate: 0.21,
     twinfieldAccount: '8003',
     group: 'horeca',
+    priority: 11,
   },
   'Single Classes': {
     keywords: [
@@ -220,6 +285,14 @@ export const REVENUE_CATEGORIES: Record<string, CategoryConfig> = {
     btwRate: 0.09,
     twinfieldAccount: '8120',
     group: 'yoga',
+    priority: 12,
+  },
+  'Overig': {
+    keywords: [],
+    btwRate: 0.09,
+    twinfieldAccount: '8999',
+    group: 'yoga',
+    priority: 99,
   },
 };
 

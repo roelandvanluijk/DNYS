@@ -1,0 +1,891 @@
+# COMPLETE Replit Agent Prompt: DNYS Revenue Categorization Tool
+## De Nieuwe Yogaschool - Advanced Revenue Management System
+
+---
+
+## Project Overview
+
+Build a comprehensive revenue management tool for **De Nieuwe Yogaschool** (Amsterdam yoga studio) with:
+
+**PRIMARY FEATURES:**
+1. **Automatic revenue categorization** into 12 accounting categories
+2. **Product database** with memory (remembers all products and their settings)
+3. **New product detection** with user review workflow
+4. **Accrual management** for Opleidingen (training programs)
+5. **Revenue spreading** for Jaarabonnementen (yearly memberships)
+6. **Stripe reconciliation** with detailed transaction drill-down
+
+**Budget:** €599 (8-10 hours development)  
+**Client Website:** https://denieuweyogaschool.nl/
+
+---
+
+## Technical Stack
+
+- **Backend:** Python 3.11+ with Flask
+- **Frontend:** HTML5, Tailwind CSS (via CDN), Vanilla JavaScript
+- **Database:** SQLite3 (with product settings memory)
+- **Libraries:** pandas, openpyxl, datetime
+
+---
+
+## Design & Branding
+
+### Logo Integration
+```html
+<img src="https://denieuweyogaschool.nl/wp-content/uploads/2024/05/DNYS_Main.svg" 
+     alt="De Nieuwe Yogaschool" 
+     class="h-12">
+```
+
+### Color Palette
+```css
+:root {
+  --primary-beige: #F5F1E8;      /* Light warm background */
+  --primary-brown: #8B7355;      /* Headers */
+  --accent-terracotta: #D4916C;  /* Buttons */
+  --text-dark: #2C2C2C;          /* Body text */
+  --success-green: #7FA650;      /* Matched/OK */
+  --warning-orange: #E8A87C;     /* Needs review */
+  --error-red: #C85C5C;          /* Errors */
+}
+```
+
+---
+
+## Database Schema (CRITICAL - Complete Structure)
+
+### 1. Product Settings (Memory System)
+```sql
+CREATE TABLE IF NOT EXISTS product_settings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    item_name TEXT UNIQUE NOT NULL,
+    category TEXT NOT NULL,
+    btw_rate REAL NOT NULL,
+    twinfield_account TEXT,
+    
+    -- Accrual settings (for Opleidingen)
+    has_accrual BOOLEAN DEFAULT FALSE,
+    accrual_months INTEGER,              -- e.g., 14 for Ademcoach
+    accrual_start_offset INTEGER,        -- 0=this month, 1=next month, etc.
+    
+    -- Spread settings (for Jaarabonnementen)
+    has_spread BOOLEAN DEFAULT FALSE,
+    spread_months INTEGER DEFAULT 12,
+    
+    -- Tracking
+    first_seen_date DATE,
+    last_seen_date DATE,
+    transaction_count INTEGER DEFAULT 0,
+    
+    -- Review status
+    is_reviewed BOOLEAN DEFAULT FALSE,
+    needs_review BOOLEAN DEFAULT TRUE,
+    
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+### 2. Reconciliation Sessions
+```sql
+CREATE TABLE IF NOT EXISTS reconciliation_sessions (
+    id TEXT PRIMARY KEY,
+    period TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    
+    -- Totals
+    momence_total REAL,
+    stripe_total REAL,
+    stripe_fees REAL,
+    stripe_net REAL,
+    
+    -- Match stats
+    matched_count INTEGER,
+    unmatched_count INTEGER,
+    
+    -- New products found
+    new_products_count INTEGER DEFAULT 0,
+    all_products_reviewed BOOLEAN DEFAULT FALSE,
+    
+    status TEXT DEFAULT 'pending_review'  -- 'pending_review', 'completed'
+);
+```
+
+### 3. Momence Transactions (with accrual tracking)
+```sql
+CREATE TABLE IF NOT EXISTS momence_transactions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT,
+    sale_reference TEXT,
+    category TEXT,
+    item TEXT,
+    date TEXT,
+    sale_value REAL,
+    tax REAL,
+    payment_method TEXT,
+    customer_email TEXT,
+    
+    -- Categorization
+    revenue_category TEXT,
+    btw_rate REAL,
+    twinfield_account TEXT,
+    
+    -- Accrual/Spread tracking
+    has_accrual BOOLEAN DEFAULT FALSE,
+    accrual_months INTEGER,
+    accrual_start_month TEXT,        -- e.g., "2025-05" for May 2025
+    monthly_amount REAL,              -- Amount per month if spread
+    
+    product_id INTEGER,
+    is_new_product BOOLEAN DEFAULT FALSE,
+    
+    FOREIGN KEY (session_id) REFERENCES reconciliation_sessions(id),
+    FOREIGN KEY (product_id) REFERENCES product_settings(id)
+);
+```
+
+### 4. Accrual Schedule (for detailed booking)
+```sql
+CREATE TABLE IF NOT EXISTS accrual_schedule (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    transaction_id INTEGER,
+    session_id TEXT,
+    
+    booking_month TEXT,              -- e.g., "2025-05" for May 2025
+    booking_amount REAL,
+    category TEXT,
+    btw_rate REAL,
+    twinfield_account TEXT,
+    
+    FOREIGN KEY (transaction_id) REFERENCES momence_transactions(id),
+    FOREIGN KEY (session_id) REFERENCES reconciliation_sessions(id)
+);
+```
+
+### 5. Stripe Transactions (detailed storage)
+```sql
+CREATE TABLE IF NOT EXISTS stripe_transactions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT,
+    charge_id TEXT,
+    gross REAL,
+    fee REAL,
+    net REAL,
+    created_date TEXT,
+    customer_email TEXT,
+    customer_name TEXT,
+    reporting_category TEXT,
+    payment_method_type TEXT,
+    
+    FOREIGN KEY (session_id) REFERENCES reconciliation_sessions(id)
+);
+```
+
+### 6-9. Other tables (same as before)
+```sql
+-- customer_comparison, category_summary, payment_method_summary
+-- (Keep existing structure from previous prompt)
+```
+
+---
+
+## Revenue Categories (12 Categories)
+
+### Category Definitions
+
+| # | Category | BTW | Twinfield | Special Handling |
+|---|----------|-----|-----------|------------------|
+| 1 | Abonnementen (Monthly) | 9% | 8100 | Regular |
+| 2 | **Jaarabonnementen** | 9% | 8101 | **Spread 12 months** |
+| 3 | Rittenkaarten | 9% | 8110 | Regular |
+| 4 | Single Classes | 9% | 8120 | Regular |
+| 5 | Workshops & Events | 9% | 8150 | Regular |
+| 6 | **Opleidingen** | 21% | 8300 | **Accrual periods** |
+| 7 | **Online/Livestream** | 9% | 8200 | **PRIORITY rule** |
+| 8 | **Gift Cards** | 0% | 8900 | Separate from credits |
+| 9 | **Money Credits** | 0% | 8901 | Separate from cards |
+| 10 | Omzet Keuken | 9% | 8001 | Regular |
+| 11 | Omzet Drank Laag | 9% | 8002 | Regular |
+| 12 | Omzet Drank Hoog | 21% | 8003 | Usually empty |
+| 13 | Overig | varies | 8999 | Catch-all |
+
+---
+
+## Categorization Logic (PRIORITY ORDER - CRITICAL)
+
+```python
+def categorize_item(item_name, item_lower=None):
+    """
+    Smart categorization with STRICT priority order
+    Returns: (category, btw_rate, twinfield_account, special_handling)
+    """
+    if item_lower is None:
+        item_lower = item_name.lower()
+    
+    # PRIORITY 1: Online/Livestream (OVERRIDES EVERYTHING)
+    # If item contains these keywords, it's ALWAYS Online/Livestream
+    # Even if it also says "unlimited", "membership", "year", etc.
+    if any(word in item_lower for word in ['livestream', 'online']):
+        return ('Online/Livestream', 0.09, '8200', None)
+    
+    # PRIORITY 2: Opleidingen (21% BTW, accrual tracking)
+    if any(word in item_lower for word in [
+        'opleiding', 'teacher training', '200 uur', 'ademcoach',
+        'yogatherapie', 'meditatie tot zelfrealisatie', 'schoolverlichting',
+        'facilitator', 'certification', 'pilates teacher training'
+    ]):
+        return ('Opleidingen', 0.21, '8300', 'accrual')
+    
+    # PRIORITY 3: Jaarabonnementen (Yearly memberships - spread over 12 months)
+    if any(word in item_lower for word in [
+        'year membership', 'yearly', 'jaarlijks', 'jaar', 'year'
+    ]) and 'membership' in item_lower:
+        return ('Jaarabonnementen', 0.09, '8101', 'spread_12')
+    
+    # PRIORITY 4: Gift Cards (alphanumeric codes)
+    # Pattern: 8-10 character codes like "ZR84W99B", "NT2EXX2E"
+    import re
+    if re.match(r'^[A-Z0-9]{6,10}$', item_name):
+        return ('Gift Cards', 0.00, '8900', None)
+    if 'gift card' in item_lower or 'cadeaukaart' in item_lower:
+        return ('Gift Cards', 0.00, '8900', None)
+    
+    # PRIORITY 5: Money Credits
+    if 'money credit' in item_lower or 'tegoed' in item_lower:
+        return ('Money Credits', 0.00, '8901', None)
+    
+    # PRIORITY 6: Workshops & Events (before single classes)
+    if any(word in item_lower for word in [
+        'workshop', 'ceremony', 'cacao', 'tantra', 'truffle',
+        'retreat', 'circle', 'event', 'face yoga', 'sound healing'
+    ]):
+        return ('Workshops & Events', 0.09, '8150', None)
+    
+    # PRIORITY 7: Abonnementen (Monthly memberships)
+    if any(word in item_lower for word in [
+        'membership', 'unlimited', 'abonnement', 'lidmaatschap', 'doorlopend'
+    ]) and not any(word in item_lower for word in ['year', 'yearly', 'jaar']):
+        return ('Abonnementen', 0.09, '8100', None)
+    
+    # PRIORITY 8: Rittenkaarten (Class cards)
+    if any(word in item_lower for word in [
+        'class card', 'rittenkaart', 'lessenkaart', 'intro', 'kaart'
+    ]) and 'single' not in item_lower:
+        return ('Rittenkaarten', 0.09, '8110', None)
+    
+    # PRIORITY 9: Omzet Keuken (Food)
+    if any(word in item_lower for word in [
+        'bananenbrood', 'banana bread', 'quiche', 'soep', 'soup',
+        'bliss ball', 'brownie', 'snickers', 'combideal', 'meal'
+    ]):
+        return ('Omzet Keuken', 0.09, '8001', None)
+    
+    # PRIORITY 10: Omzet Drank Laag (Non-alcoholic drinks)
+    if any(word in item_lower for word in [
+        'coffee', 'cappuccino', 'latte', 'espresso', 'flat white',
+        'cortado', 'macchiato', 'americano', 'chai', 'matcha',
+        'tea', 'thee', 'smoothie', 'kombucha', 'lemonaid', 'charitea',
+        'kokoswater', 'water', 'ijsthee', 'juice', 'cacaoccino',
+        'cacao shot', 'cashew melk'
+    ]):
+        return ('Omzet Drank Laag', 0.09, '8002', None)
+    
+    # PRIORITY 11: Omzet Drank Hoog (Alcoholic drinks)
+    if any(word in item_lower for word in [
+        'beer', 'wine', 'alcohol', 'bier', 'wijn'
+    ]):
+        return ('Omzet Drank Hoog', 0.21, '8003', None)
+    
+    # PRIORITY 12: Single Classes (catch-all for yoga/pilates)
+    if any(word in item_lower for word in [
+        'single class', 'yoga', 'pilates', 'flow', 'yin', 'vinyasa',
+        'ashtanga', 'hatha', 'restorative', 'breathwork', 'meditation',
+        'sound', '€15', '€16', '€17', '€18', 'class'
+    ]):
+        return ('Single Classes', 0.09, '8120', None)
+    
+    # Default: Overig
+    return ('Overig', 0.09, '8999', None)
+```
+
+---
+
+## Core Processing Flow (NEW ENHANCED WORKFLOW)
+
+### Step 1: Upload & Initial Processing
+```python
+def process_upload(momence_file, stripe_file, period):
+    session_id = str(uuid.uuid4())
+    
+    # 1. Load CSVs
+    momence_df = pd.read_csv(momence_file)
+    stripe_df = pd.read_csv(stripe_file)
+    
+    # 2. Check for new products
+    new_products = check_for_new_products(momence_df)
+    
+    if new_products:
+        # Store session temporarily
+        store_temp_session(session_id, momence_df, stripe_df, period)
+        
+        # Return new products for user review
+        return {
+            'status': 'needs_review',
+            'session_id': session_id,
+            'new_products': new_products,
+            'new_product_count': len(new_products)
+        }
+    else:
+        # All products known, proceed with categorization
+        return process_categorization(session_id, momence_df, stripe_df, period)
+```
+
+### Step 2: New Product Detection
+```python
+def check_for_new_products(momence_df):
+    """
+    Check which products are new (not in database)
+    Returns list of new products with suggested categorization
+    """
+    new_products = []
+    
+    unique_items = momence_df['Item'].unique()
+    
+    for item in unique_items:
+        # Check if product exists in database
+        product = database.get_product_by_name(item)
+        
+        if not product:
+            # New product - auto-categorize
+            category, btw_rate, twinfield, special = categorize_item(item)
+            
+            new_products.append({
+                'item_name': item,
+                'suggested_category': category,
+                'btw_rate': btw_rate,
+                'twinfield_account': twinfield,
+                'special_handling': special,
+                'transaction_count': len(momence_df[momence_df['Item'] == item])
+            })
+    
+    return new_products
+```
+
+### Step 3: User Review Interface
+```python
+@app.route('/review-products/<session_id>', methods=['GET', 'POST'])
+def review_products(session_id):
+    if request.method == 'GET':
+        # Show new products for review
+        new_products = get_new_products_for_session(session_id)
+        return render_template('review_products.html', 
+                             session_id=session_id,
+                             new_products=new_products)
+    
+    elif request.method == 'POST':
+        # Save user's product settings
+        product_settings = request.json['products']
+        
+        for product in product_settings:
+            database.save_product_settings(
+                item_name=product['item_name'],
+                category=product['category'],
+                btw_rate=product['btw_rate'],
+                twinfield_account=product['twinfield_account'],
+                has_accrual=product.get('has_accrual', False),
+                accrual_months=product.get('accrual_months'),
+                has_spread=product.get('has_spread', False),
+                spread_months=product.get('spread_months', 12),
+                is_reviewed=True,
+                needs_review=False
+            )
+        
+        # Now proceed with categorization
+        session_data = get_temp_session(session_id)
+        result = process_categorization(
+            session_id,
+            session_data['momence_df'],
+            session_data['stripe_df'],
+            session_data['period']
+        )
+        
+        return jsonify(result)
+```
+
+### Step 4: Accrual & Spread Processing
+```python
+def apply_accrual_or_spread(transaction, product_settings):
+    """
+    Apply accrual or spreading logic based on product settings
+    """
+    if product_settings.has_accrual:
+        # Opleidingen - spread over multiple months
+        return create_accrual_schedule(
+            transaction=transaction,
+            months=product_settings.accrual_months,
+            start_offset=product_settings.accrual_start_offset
+        )
+    
+    elif product_settings.has_spread:
+        # Jaarabonnementen - spread over 12 months
+        return create_spread_schedule(
+            transaction=transaction,
+            months=product_settings.spread_months
+        )
+    
+    else:
+        # Regular transaction - book in current month
+        return [{
+            'booking_month': transaction['date'][:7],  # YYYY-MM
+            'booking_amount': transaction['sale_value'],
+            'category': product_settings.category,
+            'btw_rate': product_settings.btw_rate
+        }]
+
+def create_accrual_schedule(transaction, months, start_offset):
+    """
+    Create monthly accrual schedule
+    
+    Example:
+    - Transaction: Jan 2025, €2,800
+    - Months: 14
+    - Start offset: 4 (starts May 2025)
+    
+    Result: €0 Jan-Apr, €200/month May 2025-Jun 2026
+    """
+    from dateutil.relativedelta import relativedelta
+    
+    sale_date = datetime.strptime(transaction['date'][:10], '%Y-%m-%d')
+    start_month = sale_date + relativedelta(months=start_offset)
+    
+    monthly_amount = transaction['sale_value'] / months
+    schedule = []
+    
+    for i in range(months):
+        booking_month = start_month + relativedelta(months=i)
+        schedule.append({
+            'booking_month': booking_month.strftime('%Y-%m'),
+            'booking_amount': round(monthly_amount, 2),
+            'category': transaction['category'],
+            'btw_rate': transaction['btw_rate']
+        })
+    
+    return schedule
+
+def create_spread_schedule(transaction, months=12):
+    """
+    Create monthly spread schedule for yearly memberships
+    
+    Example:
+    - Transaction: Jan 2025, €875
+    - Months: 12
+    
+    Result: €72.92/month Jan 2025-Dec 2025
+    """
+    from dateutil.relativedelta import relativedelta
+    
+    sale_date = datetime.strptime(transaction['date'][:10], '%Y-%m-%d')
+    monthly_amount = transaction['sale_value'] / months
+    schedule = []
+    
+    for i in range(months):
+        booking_month = sale_date + relativedelta(months=i)
+        schedule.append({
+            'booking_month': booking_month.strftime('%Y-%m'),
+            'booking_amount': round(monthly_amount, 2),
+            'category': transaction['category'],
+            'btw_rate': transaction['btw_rate']
+        })
+    
+    return schedule
+```
+
+---
+
+## User Interface Pages
+
+### Page 1: Upload (/)
+```
+┌────────────────────────────────────────────────┐
+│ [DNYS Logo] | Reconciliatie Tool                │
+├────────────────────────────────────────────────┤
+│                                                │
+│  Momence-Stripe Reconciliatie                 │
+│  Automatische omzetcategorisatie              │
+│                                                │
+│  ┌──────────────────────────────────┐         │
+│  │ Periode: [2025-01____]           │         │
+│  │                                  │         │
+│  │ Momence CSV                      │         │
+│  │ [Upload zone]                    │         │
+│  │                                  │         │
+│  │ Stripe CSV                       │         │
+│  │ [Upload zone]                    │         │
+│  │                                  │         │
+│  │ [Start Verwerking]               │         │
+│  └──────────────────────────────────┘         │
+└────────────────────────────────────────────────┘
+```
+
+### Page 2: Product Review (NEW - /review-products/<session_id>)
+```
+┌─────────────────────────────────────────────────────────┐
+│ [DNYS Logo] | Nieuwe Producten Controleren              │
+├─────────────────────────────────────────────────────────┤
+│                                                         │
+│ ⚠️  3 NIEUWE PRODUCTEN GEVONDEN                         │
+│                                                         │
+│ Controleer de categorisering en instellingen:          │
+│                                                         │
+│ ┌───────────────────────────────────────────────────┐  │
+│ │ 1. Cacao & Microdose Facilitator Training        │  │
+│ │    Gesuggereerd: Opleidingen (21% BTW)            │  │
+│ │    Aantal transacties: 4 (€12,400 totaal)        │  │
+│ │                                                   │  │
+│ │    Categorie: [Opleidingen ▼]                    │  │
+│ │    ☑ Dit is een opleiding met accruals           │  │
+│ │       └─ Aantal maanden: [6 ▼]                   │  │
+│ │          Start maand: [Deze maand ▼]             │  │
+│ │          (€2,066.67 per maand)                   │  │
+│ │                                                   │  │
+│ │    [✓ Accepteer] [✗ Andere categorie]            │  │
+│ └───────────────────────────────────────────────────┘  │
+│                                                         │
+│ ┌───────────────────────────────────────────────────┐  │
+│ │ 2. Unlimited Year Membership | €850,-            │  │
+│ │    Gesuggereerd: Jaarabonnementen (9% BTW)       │  │
+│ │    Aantal transacties: 8 (€6,800 totaal)         │  │
+│ │                                                   │  │
+│ │    Categorie: [Jaarabonnementen ▼]               │  │
+│ │    ☑ Spreid over 12 maanden                      │  │
+│ │       (€70.83 per maand)                         │  │
+│ │                                                   │  │
+│ │    [✓ Accepteer] [✗ Andere categorie]            │  │
+│ └───────────────────────────────────────────────────┘  │
+│                                                         │
+│ ┌───────────────────────────────────────────────────┐  │
+│ │ 3. ZR84W99B                                       │  │
+│ │    Gesuggereerd: Overig ⚠️ (lijkt op gift card)   │  │
+│ │    Aantal transacties: 1 (€75)                   │  │
+│ │                                                   │  │
+│ │    Categorie: [Gift Cards ▼] ← WIJZIG            │  │
+│ │                                                   │  │
+│ │    [✓ Accepteer] [✗ Andere categorie]            │  │
+│ └───────────────────────────────────────────────────┘  │
+│                                                         │
+│ [Alles Opslaan & Doorgaan]                             │
+│                                                         │
+└─────────────────────────────────────────────────────────┘
+```
+
+### Page 3: Results (/results/<session_id>)
+```
+┌──────────────────────────────────────────────────────────────┐
+│ [DNYS Logo] | Reconciliatie Tool    [Download Excel]         │
+│ Periode: December 2025                                       │
+├──────────────────────────────────────────────────────────────┤
+│                                                              │
+│ ══════════════ OMZET CATEGORIEËN ══════════════             │
+│                                                              │
+│ YOGA & STUDIO SERVICES                                       │
+│ ┌────────────────────────────────────────────────────────┐  │
+│ │Cat│Categorie        │Aantal│Bedrag    │% │BTW│Tw.│Bar││  │
+│ ├───┼─────────────────┼──────┼──────────┼──┼───┼───┼───┤│  │
+│ │ 1 │Abonnementen     │  380 │€31,309.92│20│ 9%│810│███││  │
+│ │ 2 │Jaarabonnementen │   12 │€ 6,487.95│ 4│ 9%│810│█  ││  │
+│ │   │  (spread 12m)   │      │          │  │   │   │   ││  │
+│ │ 3 │Rittenkaarten    │  118 │€ 7,647.00│ 5│ 9%│811│█  ││  │
+│ │ 4 │Single Classes   │  460 │€ 8,478.50│ 5│ 9%│812│█  ││  │
+│ │ 5 │Workshops        │  286 │€12,298.75│ 8│ 9%│815│██ ││  │
+│ │ 6 │Opleidingen      │    4 │€ 6,487.95│ 4│21%│830│█  ││  │
+│ │   │  (accrual 6m)   │      │          │  │   │   │   ││  │
+│ │ 7 │Online/Livestrm  │  496 │€11,817.59│ 7│ 9%│820│██ ││  │
+│ │ 8 │Gift Cards       │    5 │€   150.00│ 0│ 0%│890│   ││  │
+│ │ 9 │Money Credits    │    4 │€   166.00│ 0│ 0%│890│   ││  │
+│ └───┴─────────────────┴──────┴──────────┴──┴───┴───┴───┘│  │
+│                           Subtotaal: €84,843.66 (97%)       │
+│                                                              │
+│ HORECA / CAFÉ                                                │
+│ ┌────────────────────────────────────────────────────────┐  │
+│ │10 │Omzet Keuken     │  456 │€ 2,345.00│ 2│ 9%│800│█  ││  │
+│ │11 │Omzet Drank Laag │  892 │€ 5,234.00│ 4│ 9%│800│█  ││  │
+│ │12 │Omzet Drank Hoog │    0 │€     0.00│ 0│21%│800│   ││  │
+│ │13 │Overig           │   44 │€ 2,331.70│ 1│ 9%│899│   ││  │
+│ └───┴─────────────────┴──────┴──────────┴──┴───┴───┴───┘│  │
+│                            Subtotaal: € 9,910.70 (6%)       │
+│                                                              │
+│ ═══════════════════════════════════════════════════════════ │
+│ TOTAAL OMZET                       €154,266.81 (100%)       │
+│                                                              │
+│ BTW Overzicht:                                               │
+│ • 9% BTW:          €12,125.45                               │
+│ • 21% BTW:         € 1,362.47                               │
+│ • Totaal BTW:      €13,487.92                               │
+│                                                              │
+│ ℹ️ Accruals:                                                 │
+│ • Opleidingen: €6,487.95 gespreid over 6 maanden           │
+│ • Jaarabonnementen: €6,487.95 gespreid over 12 maanden     │
+│                                                              │
+└──────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────┐
+│ ══════════════ STRIPE CONTROLE ══════════════                │
+│ ┌──────────────┬──────────────┬────────────┐                │
+│ │ Momence      │ €154,266.81  │            │                │
+│ │ Stripe Gross │ €154,266.81  │ ✅ Match   │                │
+│ │ Stripe Fees  │ € (3,856.67) │            │                │
+│ │ Stripe Net   │ €150,410.14  │ ← Received │                │
+│ └──────────────┴──────────────┴────────────┘                │
+│                                                              │
+│ [Details bekijken ▼]                                         │
+└──────────────────────────────────────────────────────────────┘
+```
+
+### Page 4: Product Settings (NEW - /products)
+```
+┌─────────────────────────────────────────────────────────┐
+│ [DNYS Logo] | Product Instellingen                        │
+├─────────────────────────────────────────────────────────┤
+│                                                         │
+│ [Zoek product...................................]       │
+│                                                         │
+│ OPLEIDINGEN (met accruals):                             │
+│ ┌───────────────────────────────────────────────────┐  │
+│ │ Ademcoach opleiding - 14 dagen                    │  │
+│ │ Categorie: Opleidingen | 21% BTW                  │  │
+│ │ Accrual: 14 maanden, start deze maand            │  │
+│ │ Laatste gezien: 15-12-2025 (3 transacties)       │  │
+│ │ [Wijzig instellingen]                             │  │
+│ └───────────────────────────────────────────────────┘  │
+│                                                         │
+│ │ Yogatherapie opleiding                            │  │
+│ │ Accrual: 12 maanden                               │  │
+│ │ [Wijzig]                                          │  │
+│ └───────────────────────────────────────────────────┘  │
+│                                                         │
+│ JAARABONNEMENTEN (spreiding):                           │
+│ ┌───────────────────────────────────────────────────┐  │
+│ │ One year membership | €875,-                      │  │
+│ │ Spreiding: 12 maanden                             │  │
+│ │ Laatste gezien: 20-12-2025 (8 transacties)       │  │
+│ │ [Wijzig]                                          │  │
+│ └───────────────────────────────────────────────────┘  │
+│                                                         │
+│ ALLE PRODUCTEN (143 totaal):                            │
+│ [Filter: Alles ▼] [Sorteer: Recent ▼]                  │
+│ ┌───────────────────────────────────────────────────┐  │
+│ │ Cappuccino → Omzet Drank Laag (892 × €3.50)      │  │
+│ │ Yin Yoga → Single Classes (234 × €18)            │  │
+│ │ ...                                               │  │
+│ └───────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Excel Export (Enhanced with Accruals)
+
+### Sheet 1: Omzet Categorieën (with period columns)
+```
+De Nieuwe Yogaschool - Omzet Overzicht
+Periode: December 2025
+
+| Categorie         | Totaal      | Deze Mnd | Jan 2026 | Feb 2026 | ... | BTW% | Twinfield |
+|-------------------|-------------|----------|----------|----------|-----|------|-----------|
+| Abonnementen      | €31,309.92  |€31,309.92|€     0.00|€     0.00| ... | 9%   | 8100      |
+| Jaarabonnementen  | € 6,487.95  |€    540.66|€  540.66|€  540.66| ... | 9%   | 8101      |
+| Opleidingen       | € 6,487.95  |€  1,081.33|€1,081.33|€1,081.33| ... | 21%  | 8300      |
+| ...               |             |          |          |          |     |      |           |
+
+ℹ️ Toelichting:
+• Jaarabonnementen: €6,487.95 gespreid over 12 maanden (€540.66/mnd)
+• Opleidingen: €6,487.95 gespreid over 6 maanden (€1,081.33/mnd)
+```
+
+### Sheet 2: Accrual Schema (NEW)
+```
+Gedetailleerd Accrual Overzicht
+
+| Product                  | Verkoopdatum | Bedrag    | Spreiding | Boekmaand | Maandbedrag |
+|--------------------------|--------------|-----------|-----------|-----------|-------------|
+| Ademcoach opleiding      | 2025-12-15   | €2,238.50 | 14 mnd    | 2025-12   | €159.89     |
+| Ademcoach opleiding      | 2025-12-15   | €2,238.50 | 14 mnd    | 2026-01   | €159.89     |
+| ...                      | ...          | ...       | ...       | ...       | ...         |
+| Year membership          | 2025-12-20   | €  875.00 | 12 mnd    | 2025-12   | € 72.92     |
+| Year membership          | 2025-12-20   | €  875.00 | 12 mnd    | 2026-01   | € 72.92     |
+```
+
+### Sheet 3-6: (Same as before)
+- Stripe Controle
+- Payment Methods
+- Klant Vergelijking
+- Alle Transacties
+
+---
+
+## Critical Implementation Notes
+
+### 1. Stripe CSV Handling
+```python
+# CORRECT column names (Itemized payout reconciliation file)
+stripe_df = pd.read_csv(stripe_file)
+required_columns = ['customer_email', 'gross', 'fee', 'net', 'reporting_category']
+
+# CORRECT filtering
+stripe_charges = stripe_df[stripe_df['reporting_category'] == 'charge'].copy()
+
+# CORRECT fee handling - already in euros
+# NO division by 100 needed
+total_fees = stripe_charges['fee'].sum()  # Already in EUR
+```
+
+### 2. Product Matching Logic
+```python
+def get_or_create_product(item_name):
+    """
+    Get product from database or create if new
+    """
+    product = database.get_product_by_name(item_name)
+    
+    if not product:
+        # New product - auto-categorize
+        category, btw, twinfield, special = categorize_item(item_name)
+        
+        product = database.create_product(
+            item_name=item_name,
+            category=category,
+            btw_rate=btw,
+            twinfield_account=twinfield,
+            needs_review=True,
+            is_reviewed=False
+        )
+        
+        # Set special handling flags
+        if special == 'accrual':
+            product.has_accrual = True
+            product.accrual_months = 6  # Default
+        elif special == 'spread_12':
+            product.has_spread = True
+            product.spread_months = 12
+        
+        database.save_product(product)
+    
+    # Update tracking
+    product.transaction_count += 1
+    product.last_seen_date = datetime.now()
+    database.save_product(product)
+    
+    return product
+```
+
+### 3. Email Normalization
+```python
+df['customer_email'] = df['customer_email'].str.lower().str.strip()
+```
+
+### 4. Online/Livestream Priority Rule
+```python
+# CRITICAL: This check must come FIRST in categorization
+if 'livestream' in item_lower or 'online' in item_lower:
+    return ('Online/Livestream', 0.09, '8200', None)
+    # Even if item also contains "unlimited", "membership", "year"
+```
+
+---
+
+## File Structure
+
+```
+/
+├── main.py                  # Flask routes
+├── reconcile.py             # Processing logic
+├── database.py              # SQLite operations
+├── product_manager.py       # Product matching & settings (NEW)
+├── accrual_calculator.py    # Accrual/spread calculations (NEW)
+├── templates/
+│   ├── base.html           # Base with logo
+│   ├── upload.html         # Upload page
+│   ├── review_products.html # Product review (NEW)
+│   ├── results.html        # Results page
+│   ├── products.html       # Product settings (NEW)
+│   └── sessions.html       # Session history
+├── static/
+│   └── js/
+│       ├── app.js          # Main frontend
+│       └── product_review.js # Product review logic (NEW)
+└── data/
+    └── reconciliation.db    # SQLite (auto-created)
+```
+
+---
+
+## Testing Expectations
+
+With provided December 2025 data:
+- **Momence:** 6,128 transactions
+- **Stripe:** 3,209 charges
+- **Expected new products:** 5-10 (first run)
+- **Expected matches:** ~1,200 customers
+- **Accrual products:** Opleidingen (4 transactions)
+- **Spread products:** Jaarabonnementen (12 transactions)
+
+**Success Criteria:**
+- ✅ New products detected and flagged
+- ✅ User can review and adjust categories
+- ✅ Accruals calculated correctly (6-14 months)
+- ✅ Yearly memberships spread over 12 months
+- ✅ Online/Livestream always categorized correctly (priority)
+- ✅ Gift cards vs Money credits separated
+- ✅ Excel shows period columns with monthly breakdowns
+- ✅ All product settings remembered for future uploads
+
+---
+
+## Priority Checklist
+
+**Must Have (€599 scope):**
+1. ✅ Product database with memory
+2. ✅ New product detection & review workflow
+3. ✅ 12 revenue categories with correct logic
+4. ✅ Accrual tracking for Opleidingen
+5. ✅ Spreading for Jaarabonnementen
+6. ✅ Online/Livestream priority rule
+7. ✅ Gift cards vs Money credits separation
+8. ✅ DNYS branding & logo
+9. ✅ Excel export with period columns
+10. ✅ Product settings page
+
+**Nice to Have (if time):**
+- Session history with search
+- Product statistics & insights
+- Bulk product editing
+- Category templates
+
+---
+
+## Implementation Order
+
+1. **Database setup** (30 min) - Create all tables including product_settings
+2. **Product management** (60 min) - Detection, matching, settings
+3. **Categorization logic** (30 min) - All 12 categories with priority
+4. **Accrual calculator** (45 min) - Monthly spread calculations
+5. **Review interface** (60 min) - New product review page
+6. **Main processing** (60 min) - Integration of all logic
+7. **Results display** (45 min) - Enhanced with accrual info
+8. **Excel export** (60 min) - Period columns, accrual sheet
+9. **Product settings page** (30 min) - View/edit all products
+10. **Testing & polish** (60 min) - With real data
+
+**Total:** ~8-9 hours
+
+---
+
+Build this application now with all features described above. Focus on:
+1. **Product database as foundation** - everything depends on this
+2. **New product detection** - critical user workflow
+3. **Accrual/spread calculations** - core business logic
+4. **Clean UI** - professional, matches DNYS brand
+5. **Data integrity** - correct Stripe handling, email normalization
+
+This is the complete, final specification. Build it now!

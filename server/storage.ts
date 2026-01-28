@@ -6,8 +6,13 @@ import type {
   CategorySummary,
   CategoryItemDetail,
   CategoryWithDetails,
-  ReconciliationResult 
+  ReconciliationResult,
+  ProductSettings,
+  InsertProductSettings
 } from "@shared/schema";
+import { productSettings } from "@shared/schema";
+import { db } from "./db";
+import { eq } from "drizzle-orm";
 
 export interface CategorySettings {
   name: string;
@@ -15,6 +20,16 @@ export interface CategorySettings {
   btwRate: number;
   twinfieldAccount: string;
   group: "yoga" | "horeca";
+}
+
+export interface NewProductSuggestion {
+  itemName: string;
+  suggestedCategory: string;
+  btwRate: number;
+  twinfieldAccount: string;
+  specialHandling: 'accrual' | 'spread_12' | null;
+  transactionCount: number;
+  totalAmount: number;
 }
 
 export interface IStorage {
@@ -33,6 +48,12 @@ export interface IStorage {
   getCategorySettings(): Promise<CategorySettings[] | null>;
   saveCategorySettings(settings: CategorySettings[]): Promise<void>;
   resetCategorySettings(): Promise<void>;
+  
+  getProductByName(itemName: string): Promise<ProductSettings | undefined>;
+  getAllProducts(): Promise<ProductSettings[]>;
+  saveProduct(product: InsertProductSettings): Promise<ProductSettings>;
+  updateProduct(id: number, updates: Partial<InsertProductSettings>): Promise<ProductSettings | undefined>;
+  deleteProduct(id: number): Promise<void>;
 }
 
 export class MemStorage implements IStorage {
@@ -160,6 +181,33 @@ export class MemStorage implements IStorage {
 
   async resetCategorySettings(): Promise<void> {
     this.customCategorySettings = null;
+  }
+
+  async getProductByName(itemName: string): Promise<ProductSettings | undefined> {
+    const [product] = await db.select().from(productSettings).where(eq(productSettings.itemName, itemName));
+    return product || undefined;
+  }
+
+  async getAllProducts(): Promise<ProductSettings[]> {
+    return await db.select().from(productSettings);
+  }
+
+  async saveProduct(product: InsertProductSettings): Promise<ProductSettings> {
+    const [saved] = await db.insert(productSettings).values(product).returning();
+    return saved;
+  }
+
+  async updateProduct(id: number, updates: Partial<InsertProductSettings>): Promise<ProductSettings | undefined> {
+    const [updated] = await db
+      .update(productSettings)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(productSettings.id, id))
+      .returning();
+    return updated || undefined;
+  }
+
+  async deleteProduct(id: number): Promise<void> {
+    await db.delete(productSettings).where(eq(productSettings.id, id));
   }
 }
 
