@@ -268,8 +268,24 @@ export async function registerRoutes(
       const period = req.body.period || "";
 
       if (!momenceFile || !stripeFile) {
-        return res.status(400).json({ success: false, error: "Beide bestanden zijn vereist" });
+        console.error("Upload error: Missing files", { 
+          hasMomence: !!momenceFile, 
+          hasStripe: !!stripeFile 
+        });
+        return res.status(400).json({ 
+          success: false, 
+          error: "Beide bestanden zijn vereist",
+          details: `Momence bestand: ${momenceFile ? 'ontvangen' : 'ontbreekt'}, Stripe bestand: ${stripeFile ? 'ontvangen' : 'ontbreekt'}`
+        });
       }
+
+      console.log("Processing files:", {
+        momenceFileName: momenceFile.originalname,
+        momenceSize: momenceFile.size,
+        stripeFileName: stripeFile.originalname,
+        stripeSize: stripeFile.size,
+        period: period
+      });
 
       const momenceContent = momenceFile.buffer.toString("utf-8");
       const stripeContent = stripeFile.buffer.toString("utf-8");
@@ -283,6 +299,46 @@ export async function registerRoutes(
         header: true,
         skipEmptyLines: true,
       });
+
+      // Log parsing results
+      console.log("CSV parsing results:", {
+        momenceRows: momenceResult.data.length,
+        momenceErrors: momenceResult.errors.length,
+        stripeRows: stripeResult.data.length,
+        stripeErrors: stripeResult.errors.length,
+      });
+
+      // Check for parsing errors
+      if (momenceResult.errors.length > 0) {
+        console.error("Momence CSV parsing errors:", momenceResult.errors.slice(0, 5));
+      }
+      if (stripeResult.errors.length > 0) {
+        console.error("Stripe CSV parsing errors:", stripeResult.errors.slice(0, 5));
+      }
+
+      // Validate we have data
+      if (momenceResult.data.length === 0) {
+        console.error("Momence file is empty or invalid");
+        return res.status(400).json({
+          success: false,
+          error: "Momence bestand is leeg of ongeldig",
+          details: "Het bestand bevat geen data. Controleer of je het juiste bestand hebt geüpload."
+        });
+      }
+
+      if (stripeResult.data.length === 0) {
+        console.error("Stripe file is empty or invalid");
+        return res.status(400).json({
+          success: false,
+          error: "Stripe bestand is leeg of ongeldig",
+          details: "Het bestand bevat geen data. Controleer of je het juiste bestand hebt geüpload."
+        });
+      }
+
+      // Check for required columns
+      const momenceHeaders = Object.keys(momenceResult.data[0] || {});
+      const stripeHeaders = Object.keys(stripeResult.data[0] || {});
+      console.log("Detected headers:", { momenceHeaders, stripeHeaders });
 
       // Fetch custom category settings (if any)
       const customCategories = await storage.getCategorySettings();
@@ -554,10 +610,35 @@ export async function registerRoutes(
 
       res.json({ success: true, sessionId: session.id });
     } catch (error) {
-      console.error("Reconciliation error:", error);
+      const errorMessage = error instanceof Error ? error.message : "Onbekende fout";
+      const errorStack = error instanceof Error ? error.stack : undefined;
+      
+      console.error("=== RECONCILIATION ERROR ===");
+      console.error("Error message:", errorMessage);
+      console.error("Error stack:", errorStack);
+      console.error("Error object:", JSON.stringify(error, Object.getOwnPropertyNames(error || {}), 2));
+      console.error("=== END ERROR ===");
+      
+      // Provide user-friendly error messages based on error type
+      let userMessage = "Er is een fout opgetreden bij het verwerken van de bestanden.";
+      let details = errorMessage;
+      
+      if (errorMessage.includes("database") || errorMessage.includes("connection") || errorMessage.includes("EAI_AGAIN")) {
+        userMessage = "Database verbindingsfout";
+        details = "De database is tijdelijk niet bereikbaar. Probeer het over een paar seconden opnieuw.";
+      } else if (errorMessage.includes("parse") || errorMessage.includes("CSV")) {
+        userMessage = "CSV verwerkingsfout";
+        details = "Er is een probleem met het lezen van de CSV bestanden. Controleer of de bestanden het juiste formaat hebben.";
+      } else if (errorMessage.includes("column") || errorMessage.includes("header")) {
+        userMessage = "Onverwachte bestandsindeling";
+        details = "De kolommen in het bestand komen niet overeen met het verwachte formaat.";
+      }
+      
       res.status(500).json({ 
         success: false, 
-        error: error instanceof Error ? error.message : "Er is een fout opgetreden" 
+        error: userMessage,
+        details: details,
+        technicalError: process.env.NODE_ENV === 'development' ? errorMessage : undefined
       });
     }
   });

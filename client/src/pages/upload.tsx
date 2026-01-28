@@ -92,14 +92,28 @@ export default function UploadPage() {
         });
         navigate(`/results/${data.sessionId}`);
       } else {
-        throw new Error(data.error || "Er is iets misgegaan");
+        // Combine error and details for better feedback
+        const errorMessage = data.error || "Er is iets misgegaan";
+        const errorDetails = data.details ? `\n${data.details}` : "";
+        throw new Error(errorMessage + errorDetails);
       }
     } catch (error) {
+      let errorDescription = "Er is een fout opgetreden";
+      
+      if (error instanceof Error) {
+        errorDescription = error.message;
+      } else if (typeof error === 'object' && error !== null) {
+        errorDescription = JSON.stringify(error);
+      }
+      
       toast({
         title: "Fout bij verwerking",
-        description: error instanceof Error ? error.message : "Er is een fout opgetreden",
+        description: errorDescription,
         variant: "destructive",
       });
+      
+      // Also log to console for debugging
+      console.error("Upload error:", error);
     } finally {
       setIsLoading(false);
     }
