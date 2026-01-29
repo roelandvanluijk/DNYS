@@ -82,6 +82,32 @@ export default function ProductsPage() {
     },
   });
 
+  const clearAllMutation = useMutation({
+    mutationFn: async () => {
+      return await apiRequest("DELETE", "/api/products/all");
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/products"] });
+      toast({
+        title: "Alle producten verwijderd",
+        description: "De product database is nu leeg.",
+      });
+    },
+    onError: () => {
+      toast({
+        title: "Fout",
+        description: "Kon producten niet verwijderen.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleClearAll = () => {
+    if (window.confirm("Weet je zeker dat je ALLE producten wilt verwijderen? Dit kan niet ongedaan worden gemaakt.")) {
+      clearAllMutation.mutate();
+    }
+  };
+
   const filteredProducts = products.filter(p =>
     p.itemName.toLowerCase().includes(searchTerm.toLowerCase()) ||
     p.category.toLowerCase().includes(searchTerm.toLowerCase())
@@ -159,11 +185,31 @@ export default function ProductsPage() {
         <div className="max-w-5xl mx-auto">
           <Card className="mb-6">
             <CardHeader>
-              <CardTitle className="text-lg">Bekende Producten</CardTitle>
-              <CardDescription>
-                Alle producten die ooit zijn verwerkt en hun categorisatie-instellingen.
-                {products.length > 0 && ` (${products.length} producten)`}
-              </CardDescription>
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <CardTitle className="text-lg">Bekende Producten</CardTitle>
+                  <CardDescription>
+                    Alle producten die ooit zijn verwerkt en hun categorisatie-instellingen.
+                    {products.length > 0 && ` (${products.length} producten)`}
+                  </CardDescription>
+                </div>
+                {products.length > 0 && (
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    onClick={handleClearAll}
+                    disabled={clearAllMutation.isPending}
+                    data-testid="button-clear-all"
+                  >
+                    {clearAllMutation.isPending ? (
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    ) : (
+                      <Trash2 className="w-4 h-4 mr-2" />
+                    )}
+                    Alles wissen
+                  </Button>
+                )}
+              </div>
             </CardHeader>
             <CardContent>
               <div className="relative">

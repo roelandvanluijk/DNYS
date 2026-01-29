@@ -1032,7 +1032,10 @@ export async function registerRoutes(
 
   app.post("/api/products/batch", async (req, res) => {
     try {
+      console.log("=== BATCH SAVE PRODUCTS ===");
       const products = req.body;
+      console.log("Received products count:", Array.isArray(products) ? products.length : "not an array");
+      
       if (!Array.isArray(products)) {
         return res.status(400).json({ error: "Verwacht array van producten" });
       }
@@ -1087,9 +1090,12 @@ export async function registerRoutes(
         }
       }
       
+      console.log("Batch save completed, saved count:", saved.length);
       res.json({ success: true, count: saved.length, products: saved });
     } catch (error) {
-      console.error("Batch save products error:", error);
+      console.error("=== BATCH SAVE ERROR ===");
+      console.error("Error:", error);
+      console.error("=== END ERROR ===");
       res.status(500).json({ error: "Kon producten niet opslaan" });
     }
   });
@@ -1129,12 +1135,18 @@ export async function registerRoutes(
 
   app.post("/api/reconcile/continue/:tempSessionId", async (req, res) => {
     try {
+      console.log("=== CONTINUE RECONCILIATION ===");
       const { tempSessionId } = req.params;
+      console.log("TempSessionId:", tempSessionId);
+      
       const tempSession = tempSessions.get(tempSessionId);
       
       if (!tempSession) {
+        console.error("Temp session not found:", tempSessionId);
         return res.status(404).json({ error: "Tijdelijke sessie niet gevonden of verlopen" });
       }
+      
+      console.log("Temp session found, momence rows:", tempSession.momenceData.length, "stripe rows:", tempSession.stripeData.length);
       
       tempSessions.delete(tempSessionId);
       
@@ -1377,10 +1389,29 @@ export async function registerRoutes(
         await storage.addCategoryItems(session.id, categoryName, items);
       }
 
+      console.log("Continue reconciliation completed, sessionId:", session.id);
       res.json({ success: true, sessionId: session.id });
     } catch (error) {
-      console.error("Continue reconciliation error:", error);
-      res.status(500).json({ error: "Kon reconciliatie niet voortzetten" });
+      console.error("=== CONTINUE RECONCILIATION ERROR ===");
+      console.error("Error:", error);
+      console.error("=== END ERROR ===");
+      res.status(500).json({ 
+        success: false,
+        error: error instanceof Error ? error.message : "Kon reconciliatie niet voortzetten" 
+      });
+    }
+  });
+
+  // Clear all products (for testing/reset)
+  app.delete("/api/products/all", async (req, res) => {
+    try {
+      console.log("=== CLEARING ALL PRODUCTS ===");
+      await storage.clearAllProducts();
+      console.log("All products cleared successfully");
+      res.json({ success: true, message: "Alle producten zijn verwijderd" });
+    } catch (error) {
+      console.error("Clear all products error:", error);
+      res.status(500).json({ error: "Kon producten niet verwijderen" });
     }
   });
 

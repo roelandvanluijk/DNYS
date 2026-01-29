@@ -54,6 +54,7 @@ export interface IStorage {
   saveProduct(product: InsertProductSettings): Promise<ProductSettings>;
   updateProduct(id: number, updates: Partial<InsertProductSettings>): Promise<ProductSettings | undefined>;
   deleteProduct(id: number): Promise<void>;
+  clearAllProducts(): Promise<void>;
 }
 
 export class MemStorage implements IStorage {
@@ -208,6 +209,10 @@ export class MemStorage implements IStorage {
 
   async deleteProduct(id: number): Promise<void> {
     await db.delete(productSettings).where(eq(productSettings.id, id));
+  }
+
+  async clearAllProducts(): Promise<void> {
+    await db.delete(productSettings);
   }
 }
 
