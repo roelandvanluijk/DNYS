@@ -122,6 +122,18 @@ export class MemStorage implements IStorage {
     return updatedSession;
   }
 
+  async deleteSession(id: string): Promise<boolean> {
+    const existed = this.sessions.has(id);
+    if (existed) {
+      this.sessions.delete(id);
+      this.comparisons.delete(id);
+      this.paymentMethods.delete(id);
+      this.categories.delete(id);
+      this.categoryItems.delete(id);
+    }
+    return existed;
+  }
+
   async getAllSessions(): Promise<ReconciliationSession[]> {
     return Array.from(this.sessions.values()).sort((a, b) => {
       const dateA = a.createdAt instanceof Date ? a.createdAt : new Date(a.createdAt);

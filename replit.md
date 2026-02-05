@@ -195,3 +195,11 @@ Old format: `Amount`, `Fee`, `Customer Email`, `Status`
 - Results page shows "Periode Afsluiten" button with confirmation dialog
 - Locked periods show amber "Vergrendeld" badge with option to reopen
 - Session fields: isLocked, lockedAt, lockedBy for tracking lock status
+
+**February 2026: Session Management & Cross-Month Check**
+- Delete session functionality: Can delete unlocked reconciliation sessions
+- Sessions list shows delete button with confirmation dialog (disabled for locked sessions)
+- Cross-month difference check: Compare current month differences with previous months
+- Finds potential matches where customer differences cancel out across months (opposite signs)
+- Results page shows "Vergelijk met vorige maanden" button in Stripe Control section
+- Displays matching results in table with email, amounts, periods and net difference

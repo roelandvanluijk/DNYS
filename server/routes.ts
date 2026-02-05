@@ -854,6 +854,139 @@ export async function registerRoutes(
     }
   });
 
+  // Delete a session
+  app.delete("/api/sessions/:sessionId", async (req, res) => {
+    try {
+      const { sessionId } = req.params;
+      const session = await storage.getSession(sessionId);
+      
+      if (!session) {
+        return res.status(404).json({ error: "Sessie niet gevonden" });
+      }
+      
+      // Don't allow deleting locked sessions
+      if (session.isLocked) {
+        return res.status(403).json({ error: "Kan vergrendelde sessie niet verwijderen. Ontgrendel eerst de periode." });
+      }
+      
+      const deleted = await storage.deleteSession(sessionId);
+      
+      if (deleted) {
+        res.json({ success: true, message: "Sessie verwijderd" });
+      } else {
+        res.status(404).json({ error: "Sessie niet gevonden" });
+      }
+    } catch (error) {
+      console.error("Delete session error:", error);
+      res.status(500).json({ error: "Kon sessie niet verwijderen" });
+    }
+  });
+
+  // Cross-month difference check - find differences that might cancel out across months
+  app.get("/api/sessions/:sessionId/cross-month-check", async (req, res) => {
+    try {
+      const { sessionId } = req.params;
+      const currentSession = await storage.getSession(sessionId);
+      
+      if (!currentSession) {
+        return res.status(404).json({ error: "Sessie niet gevonden" });
+      }
+      
+      // Get all sessions for comparison
+      const allSessions = await storage.getAllSessions();
+      const otherSessions = allSessions.filter(s => s.id !== sessionId);
+      
+      if (otherSessions.length === 0) {
+        return res.json({ 
+          matches: [], 
+          message: "Geen andere periodes gevonden om mee te vergelijken" 
+        });
+      }
+      
+      // Get differences from current session
+      const currentComparisons = await storage.getComparisons(sessionId);
+      const currentDifferences = currentComparisons.filter(c => 
+        c.matchStatus !== 'match' && Math.abs(c.difference ?? 0) >= 1
+      );
+      
+      if (currentDifferences.length === 0) {
+        return res.json({ 
+          matches: [], 
+          message: "Geen verschillen gevonden in huidige periode" 
+        });
+      }
+      
+      // Check each difference against previous months
+      const potentialMatches: Array<{
+        currentPeriod: string;
+        currentEmail: string;
+        currentAmount: number;
+        currentStatus: string;
+        matchPeriod: string;
+        matchEmail: string;
+        matchAmount: number;
+        matchStatus: string;
+        netDifference: number;
+      }> = [];
+      
+      for (const otherSession of otherSessions) {
+        const otherComparisons = await storage.getComparisons(otherSession.id);
+        const otherDifferences = otherComparisons.filter(c => 
+          c.matchStatus !== 'match' && Math.abs(c.difference ?? 0) >= 1
+        );
+        
+        // Find matches where differences could cancel out
+        for (const current of currentDifferences) {
+          for (const other of otherDifferences) {
+            // Match by email (same customer)
+            if ((current.customerEmail?.toLowerCase() || '') === (other.customerEmail?.toLowerCase() || '')) {
+              const currentDiff = current.difference ?? 0;
+              const otherDiff = other.difference ?? 0;
+              
+              // Check for opposite signs (one positive, one negative) - these could cancel out
+              const oppositeSign = (currentDiff > 0 && otherDiff < 0) || (currentDiff < 0 && otherDiff > 0);
+              
+              if (oppositeSign) {
+                const netDiff = currentDiff + otherDiff;
+                
+                // If the net difference is close to zero (within €5 tolerance) or
+                // significantly smaller than both individual differences, they likely cancel out
+                if (Math.abs(netDiff) < 5 || Math.abs(netDiff) < Math.min(Math.abs(currentDiff), Math.abs(otherDiff)) * 0.5) {
+                  potentialMatches.push({
+                    currentPeriod: currentSession.period,
+                    currentEmail: current.customerEmail || '',
+                    currentAmount: currentDiff,
+                    currentStatus: current.matchStatus || '',
+                    matchPeriod: otherSession.period,
+                    matchEmail: other.customerEmail || '',
+                    matchAmount: otherDiff,
+                    matchStatus: other.matchStatus || '',
+                    netDifference: netDiff,
+                  });
+                }
+              }
+            }
+          }
+        }
+      }
+      
+      // Sort by how well they match (smallest net difference first)
+      potentialMatches.sort((a, b) => Math.abs(a.netDifference) - Math.abs(b.netDifference));
+      
+      res.json({ 
+        matches: potentialMatches,
+        currentPeriod: currentSession.period,
+        comparedPeriods: otherSessions.map(s => s.period),
+        message: potentialMatches.length > 0 
+          ? `${potentialMatches.length} mogelijke overeenkomsten gevonden`
+          : "Geen overeenkomsten gevonden met vorige periodes"
+      });
+    } catch (error) {
+      console.error("Cross-month check error:", error);
+      res.status(500).json({ error: "Kon cross-month check niet uitvoeren" });
+    }
+  });
+
   app.get("/api/sessions/:sessionId/download", async (req, res) => {
     try {
       const result = await storage.getFullResult(req.params.sessionId);

@@ -398,6 +398,22 @@ export default function ResultsPage() {
   const [filter, setFilter] = useState<"all" | "matched" | "differences">("all");
   const [showPaymentMethods, setShowPaymentMethods] = useState(false);
   const [showCustomers, setShowCustomers] = useState(false);
+  const [showCrossMonthCheck, setShowCrossMonthCheck] = useState(false);
+  const [crossMonthData, setCrossMonthData] = useState<{
+    matches: Array<{
+      currentPeriod: string;
+      currentEmail: string;
+      currentAmount: number;
+      currentStatus: string;
+      matchPeriod: string;
+      matchEmail: string;
+      matchAmount: number;
+      matchStatus: string;
+      netDifference: number;
+    }>;
+    message: string;
+    comparedPeriods?: string[];
+  } | null>(null);
   const [visibleColumns, setVisibleColumns] = useState<Set<ColumnKey>>(() => {
     const initial = new Set<ColumnKey>();
     CUSTOMER_COLUMNS.forEach(col => {
@@ -463,6 +479,35 @@ export default function ResultsPage() {
   });
 
   const isLocked = data?.session?.isLocked || false;
+
+  const crossMonthMutation = useMutation({
+    mutationFn: async () => {
+      const response = await apiRequest("GET", `/api/sessions/${params.sessionId}/cross-month-check`);
+      return response.json();
+    },
+    onSuccess: (result) => {
+      setCrossMonthData(result);
+      setShowCrossMonthCheck(true);
+      if (result.matches.length > 0) {
+        toast({
+          title: "Overeenkomsten gevonden",
+          description: `${result.matches.length} mogelijke overeenkomsten met vorige periodes`,
+        });
+      } else {
+        toast({
+          title: "Geen overeenkomsten",
+          description: result.message,
+        });
+      }
+    },
+    onError: () => {
+      toast({
+        title: "Fout",
+        description: "Kon cross-month check niet uitvoeren",
+        variant: "destructive",
+      });
+    },
+  });
 
   const handleDownload = () => {
     window.open(`/api/sessions/${params.sessionId}/download`, "_blank");
@@ -706,6 +751,80 @@ export default function ResultsPage() {
                     <p className="font-semibold text-chart-3">{data.session.unmatchedCount}</p>
                   </div>
                 </div>
+
+                {(data.session.unmatchedCount ?? 0) > 0 && (
+                  <div className="mt-4 pt-4 border-t">
+                    <div className="flex items-center justify-between mb-4">
+                      <div>
+                        <h4 className="font-medium">Cross-Month Check</h4>
+                        <p className="text-sm text-muted-foreground">
+                          Controleer of verschillen overeenkomen met andere periodes
+                        </p>
+                      </div>
+                      <Button 
+                        variant="outline" 
+                        onClick={() => crossMonthMutation.mutate()}
+                        disabled={crossMonthMutation.isPending}
+                        data-testid="button-cross-month-check"
+                      >
+                        {crossMonthMutation.isPending ? "Controleren..." : "Vergelijk met vorige maanden"}
+                      </Button>
+                    </div>
+
+                    {showCrossMonthCheck && crossMonthData && (
+                      <div className="bg-muted/30 rounded-lg p-4">
+                        {crossMonthData.matches.length > 0 ? (
+                          <>
+                            <div className="flex items-center gap-2 mb-3">
+                              <Check className="w-5 h-5 text-chart-2" />
+                              <span className="font-medium">
+                                {crossMonthData.matches.length} mogelijke overeenkomsten gevonden
+                              </span>
+                            </div>
+                            <div className="overflow-x-auto">
+                              <Table>
+                                <TableHeader>
+                                  <TableRow>
+                                    <TableHead>Email</TableHead>
+                                    <TableHead className="text-right">Deze periode</TableHead>
+                                    <TableHead>Match periode</TableHead>
+                                    <TableHead className="text-right">Match bedrag</TableHead>
+                                    <TableHead className="text-right">Netto verschil</TableHead>
+                                  </TableRow>
+                                </TableHeader>
+                                <TableBody>
+                                  {crossMonthData.matches.map((match, idx) => (
+                                    <TableRow key={idx}>
+                                      <TableCell className="font-medium text-sm">{match.currentEmail}</TableCell>
+                                      <TableCell className="text-right font-mono text-sm">{formatCurrency(match.currentAmount)}</TableCell>
+                                      <TableCell className="text-sm">{match.matchPeriod}</TableCell>
+                                      <TableCell className="text-right font-mono text-sm">{formatCurrency(match.matchAmount)}</TableCell>
+                                      <TableCell className={`text-right font-mono text-sm font-semibold ${
+                                        Math.abs(match.netDifference) < 1 ? 'text-chart-2' : 'text-chart-3'
+                                      }`}>
+                                        {formatCurrency(match.netDifference)}
+                                      </TableCell>
+                                    </TableRow>
+                                  ))}
+                                </TableBody>
+                              </Table>
+                            </div>
+                            {crossMonthData.comparedPeriods && (
+                              <p className="text-xs text-muted-foreground mt-3">
+                                Vergeleken met: {crossMonthData.comparedPeriods.join(", ")}
+                              </p>
+                            )}
+                          </>
+                        ) : (
+                          <div className="text-center py-4">
+                            <AlertCircle className="w-8 h-8 mx-auto text-muted-foreground mb-2" />
+                            <p className="text-muted-foreground">{crossMonthData.message}</p>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
               </CardContent>
             </Card>
 

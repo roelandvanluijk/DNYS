@@ -1,5 +1,5 @@
 import { useLocation } from "wouter";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -11,8 +11,23 @@ import {
   AlertTriangle,
   Download,
   Eye,
-  FolderOpen
+  FolderOpen,
+  Trash2,
+  Lock
 } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import { useToast } from "@/hooks/use-toast";
+import { apiRequest } from "@/lib/queryClient";
 import type { ReconciliationSession } from "@shared/schema";
 import dnysLogo from "@/assets/dnys-logo.svg";
 
@@ -28,8 +43,9 @@ function formatDate(date: Date | string | null): string {
   }).format(d);
 }
 
-function SessionCard({ session }: { session: ReconciliationSession }) {
+function SessionCard({ session, onDelete }: { session: ReconciliationSession; onDelete: (id: string) => void }) {
   const [, navigate] = useLocation();
+  const isLocked = session.isLocked || false;
 
   return (
     <Card className="hover-elevate" data-testid={`card-session-${session.id}`}>
@@ -39,6 +55,12 @@ function SessionCard({ session }: { session: ReconciliationSession }) {
             <div className="flex items-center gap-2 mb-1">
               <Calendar className="w-4 h-4 text-muted-foreground shrink-0" />
               <h3 className="font-semibold text-lg">Periode: {session.period}</h3>
+              {isLocked && (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-700">
+                  <Lock className="w-3 h-3" />
+                  Vergrendeld
+                </span>
+              )}
             </div>
             <p className="text-sm text-muted-foreground mb-3">
               {formatDate(session.createdAt)}
@@ -74,6 +96,47 @@ function SessionCard({ session }: { session: ReconciliationSession }) {
             >
               <Download className="w-4 h-4" />
             </Button>
+            {isLocked ? (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="text-muted-foreground cursor-not-allowed"
+                disabled
+                data-testid={`button-delete-${session.id}`}
+              >
+                <Trash2 className="w-4 h-4" />
+              </Button>
+            ) : (
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="text-destructive"
+                    data-testid={`button-delete-${session.id}`}
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Sessie verwijderen?</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      Weet je zeker dat je de reconciliatie voor periode "{session.period}" wilt verwijderen? Dit kan niet ongedaan worden gemaakt.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>Annuleren</AlertDialogCancel>
+                    <AlertDialogAction 
+                      onClick={() => onDelete(session.id)}
+                      className="bg-destructive text-destructive-foreground"
+                    >
+                      Verwijderen
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            )}
           </div>
         </div>
       </CardContent>
@@ -121,10 +184,36 @@ function EmptyState() {
 
 export default function SessionsPage() {
   const [, navigate] = useLocation();
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
 
   const { data: sessions, isLoading } = useQuery<ReconciliationSession[]>({
     queryKey: ["/api/sessions"],
   });
+
+  const deleteMutation = useMutation({
+    mutationFn: async (sessionId: string) => {
+      return apiRequest("DELETE", `/api/sessions/${sessionId}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/sessions"] });
+      toast({
+        title: "Sessie verwijderd",
+        description: "De reconciliatie is succesvol verwijderd.",
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Fout",
+        description: error.message || "Er is iets misgegaan bij het verwijderen.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleDelete = (sessionId: string) => {
+    deleteMutation.mutate(sessionId);
+  };
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -158,7 +247,7 @@ export default function SessionsPage() {
         ) : sessions && sessions.length > 0 ? (
           <div className="space-y-4">
             {sessions.map((session) => (
-              <SessionCard key={session.id} session={session} />
+              <SessionCard key={session.id} session={session} onDelete={handleDelete} />
             ))}
           </div>
         ) : (
