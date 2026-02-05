@@ -1,0 +1,478 @@
+# DNYS Reconciliation Tool — Required Fixes
+
+These are the remaining fixes needed after the recent pending-reconciliation database persistence update. Implement them in the order listed below.
+
+The codebase is TypeScript with React (Vite), Express, Drizzle ORM (PostgreSQL), shadcn/ui. All changes reference the CURRENT code.
+
+---
+
+## FIX 1: Remove Dead Code (5 min)
+
+The old in-memory `tempSessions` Map was replaced by `pending_reconciliations` in the database, but the old code was left behind.
+
+### `server/routes.ts` — Delete lines 246-253:
+```typescript
+// DELETE THIS (no longer used):
+interface TempSession {
+  momenceData: MomenceRow[];
+  stripeData: StripeRow[];
+  period: string;
+  customCategories: CustomCategoryConfig[] | null;
+}
+
+const tempSessions = new Map<string, TempSession>();
+```
+
+---
+
+## FIX 2: Extract Shared Reconciliation Function (30 min)
+
+**Problem:** The full reconciliation processing logic (~250 lines) is duplicated in two endpoints:
+1. `POST /api/reconcile` (starting around line 375)
+2. `POST /api/reconcile/continue/:tempSessionId` (starting around line 1171)
+
+Every bug fix or feature change has to be applied in both places.
+
+**Fix:** Extract the shared logic into one function. Both endpoints call it.
+
+```typescript
+// Add this function BEFORE registerRoutes():
+
+async function processReconciliation(
+  momenceData: MomenceRow[],
+  stripeData: StripeRow[],
+  period: string,
+  customCategories: CustomCategoryConfig[] | null
+): Promise<{
+  sessionId: string;
+  session: any;
+}> {
+  // Move ALL the shared logic here:
+  // 1. Initialize Maps (momenceByEmail, stripeByEmail, categoryTotals, etc.)
+  // 2. Loop through momenceData rows (payment method detection, categorization, email aggregation)
+  // 3. Loop through stripeData rows (charge filtering, email aggregation)
+  // 4. Build customer comparisons
+  // 5. Create session via storage.createSession()
+  // 6. Save comparisons, payment methods, categories, category items
+  // 7. Return { sessionId: session.id, session }
+}
+```
+
+Then both endpoints become:
+```typescript
+// In POST /api/reconcile (after new-product check passes):
+const result = await processReconciliation(momenceResult.data, stripeResult.data, period, customCategories);
+res.json({ success: true, sessionId: result.sessionId });
+
+// In POST /api/reconcile/continue/:tempSessionId:
+const result = await processReconciliation(momenceData, stripeData, period, customCategories);
+res.json({ success: true, sessionId: result.sessionId });
+```
+
+**IMPORTANT:** Do this BEFORE implementing Fix 3 (accrual logic), so the accrual code only needs to be written once.
+
+---
+
+## FIX 3: Categorize ALL Transactions, Not Just Stripe (30 min)
+
+**Problem:** Inside the Momence processing loop, categorization only happens inside `if (isStripeMethod)`. Transactions paid via Class Pass, Urban Sports Club, or Gift Card are summed as `nonStripeTotal` but NEVER categorized. This means the "Omzet Categorieën" section in the results and Excel export only shows Stripe-method revenue — not total revenue.
+
+**Current code (in the shared function after Fix 2):**
+```typescript
+if (isStripeMethod) {
+  // ... email aggregation for Stripe matching ...
+  
+  const { category, btwRate, twinfieldAccount } = await categorizeItem(item, customCategories);
+  // ... category totals ...
+  // ... item tracking ...
+} else {
+  nonStripeTotal += saleValue;
+}
+```
+
+**Fix — move categorization OUTSIDE the if-block:**
+```typescript
+// ALWAYS categorize every transaction, regardless of payment method
+const { category, btwRate, twinfieldAccount } = await categorizeItem(item, customCategories);
+const catData = categoryTotals.get(category) || { 
+  count: 0, total: 0, totalTax: 0, btwRate, twinfieldAccount 
+};
+catData.count++;
+catData.total += saleValue;
+catData.totalTax += tax;
+categoryTotals.set(category, catData);
+
+// Track item details per category (also for ALL payment methods)
+const itemName = item || "Onbekend";
+if (!categoryItems.has(category)) {
+  categoryItems.set(category, new Map());
+}
+const itemsMap = categoryItems.get(category)!;
+const itemData = itemsMap.get(itemName) || { amount: 0, count: 0, dates: new Set<string>() };
+itemData.amount += saleValue;
+itemData.count++;
+if (transactionDate) itemData.dates.add(transactionDate);
+itemsMap.set(itemName, itemData);
+
+// Stripe-specific: only aggregate by email for Stripe reconciliation matching
+if (isStripeMethod) {
+  if (customerEmail) {
+    const current = momenceByEmail.get(customerEmail) || 0;
+    momenceByEmail.set(customerEmail, current + saleValue);
+    // ... rest of email aggregation stays the same ...
+  }
+} else {
+  nonStripeTotal += saleValue;
+}
+```
+
+This way category totals show 100% of revenue while Stripe reconciliation (customer email matching) still only compares Stripe-method payments.
+
+---
+
+## FIX 4: Implement Accrual & Spread Logic (2-3 hours)
+
+**Problem:** Products can be marked with `hasAccrual` (Opleidingen) or `hasSpread` (Jaarabonnementen) in the product database, but the reconciliation logic never uses these settings. All revenue is booked 100% in the current period. This is the biggest missing feature.
+
+### Step A: Add `accrual_schedule` table
+
+In `shared/schema.ts`, add after the `pendingReconciliations` table:
+
+```typescript
+export const accrualSchedule = pgTable("accrual_schedule", {
+  id: serial("id").primaryKey(),
+  sessionId: varchar("session_id").notNull(),
+  productName: text("product_name").notNull(),
+  customerEmail: text("customer_email"),
+  saleDate: text("sale_date"),
+  totalAmount: real("total_amount").notNull(),
+  spreadMonths: integer("spread_months").notNull(),
+  bookingMonth: text("booking_month").notNull(),      // format: "2025-05"
+  bookingAmount: real("booking_amount").notNull(),
+  category: text("category").notNull(),
+  btwRate: real("btw_rate").notNull(),
+  twinfieldAccount: text("twinfield_account"),
+  spreadType: text("spread_type"),                     // "accrual" or "spread_12"
+});
+
+export type AccrualEntry = typeof accrualSchedule.$inferSelect;
+```
+
+Run `npm run db:push` after adding this.
+
+### Step B: Add storage methods
+
+In `server/storage.ts`, add to the IStorage interface and MemStorage class:
+
+```typescript
+// Interface:
+addAccrualEntries(sessionId: string, entries: Omit<AccrualEntry, "id">[]): Promise<void>;
+getAccrualEntries(sessionId: string): Promise<AccrualEntry[]>;
+
+// Implementation (use database, not memory):
+async addAccrualEntries(sessionId: string, entries: Omit<AccrualEntry, "id">[]): Promise<void> {
+  if (entries.length === 0) return;
+  await db.insert(accrualSchedule).values(entries);
+}
+
+async getAccrualEntries(sessionId: string): Promise<AccrualEntry[]> {
+  return await db.select().from(accrualSchedule).where(eq(accrualSchedule.sessionId, sessionId));
+}
+```
+
+### Step C: Generate accrual entries during reconciliation
+
+In the shared `processReconciliation()` function (from Fix 2), add accrual tracking.
+
+After categorization of each transaction:
+
+```typescript
+// Initialize before the loop:
+const accrualEntries: Array<Omit<AccrualEntry, "id">> = [];
+
+// Inside the loop, after categorizeItem():
+const product = await storage.getProductByName(item);
+if (product && (product.hasAccrual || product.hasSpread)) {
+  const months = product.hasAccrual 
+    ? (product.accrualMonths || 6) 
+    : (product.spreadMonths || 12);
+  const startOffset = product.hasAccrual 
+    ? (product.accrualStartOffset || 0) 
+    : 0;
+  const monthlyAmount = saleValue / months;
+  const spreadType = product.hasAccrual ? 'accrual' : 'spread_12';
+  
+  // Parse the sale date
+  let saleDate: Date;
+  try {
+    saleDate = new Date(transactionDate);
+    if (isNaN(saleDate.getTime())) saleDate = new Date();
+  } catch {
+    saleDate = new Date();
+  }
+  
+  for (let i = 0; i < months; i++) {
+    const bookingDate = new Date(saleDate);
+    bookingDate.setMonth(bookingDate.getMonth() + startOffset + i);
+    const bookingMonth = `${bookingDate.getFullYear()}-${String(bookingDate.getMonth() + 1).padStart(2, '0')}`;
+    
+    accrualEntries.push({
+      sessionId: "",  // will be set after session creation
+      productName: item,
+      customerEmail: customerEmail || null,
+      saleDate: transactionDate || null,
+      totalAmount: saleValue,
+      spreadMonths: months,
+      bookingMonth,
+      bookingAmount: Math.round(monthlyAmount * 100) / 100,
+      category,
+      btwRate,
+      twinfieldAccount,
+      spreadType,
+    });
+  }
+}
+```
+
+After session creation:
+```typescript
+// Set sessionId on all entries and save
+if (accrualEntries.length > 0) {
+  const entriesWithSession = accrualEntries.map(e => ({ ...e, sessionId: session.id }));
+  await storage.addAccrualEntries(session.id, entriesWithSession);
+}
+```
+
+### Step D: Add "Accrual Schema" sheet to Excel export
+
+In the `/api/sessions/:sessionId/download` endpoint, after the existing sheets, add:
+
+```typescript
+// Fetch accrual entries
+const accrualEntries = await storage.getAccrualEntries(req.params.sessionId);
+
+if (accrualEntries.length > 0) {
+  const accrualSheet = workbook.addWorksheet("Accrual Schema");
+  
+  accrualSheet.getCell("A1").value = "Spreiding & Accrual Overzicht";
+  accrualSheet.getCell("A1").font = { bold: true, size: 14, color: { argb: 'FF8B7355' } };
+  accrualSheet.mergeCells("A1:H1");
+  accrualSheet.addRow([]);
+  
+  const accrualHeaders = [
+    "Product", "Klant", "Verkoopdatum", "Totaal", 
+    "Type", "Maanden", "Boekmaand", "Maandbedrag"
+  ];
+  const hdrRow = accrualSheet.addRow(accrualHeaders);
+  hdrRow.eachCell((cell) => { cell.style = headerStyle; });
+  
+  accrualSheet.columns = [
+    { width: 35 }, { width: 30 }, { width: 15 }, { width: 15 },
+    { width: 12 }, { width: 10 }, { width: 15 }, { width: 15 },
+  ];
+  
+  // Sort by product name, then booking month
+  const sorted = [...accrualEntries].sort((a, b) => {
+    if (a.productName !== b.productName) return a.productName.localeCompare(b.productName);
+    return a.bookingMonth.localeCompare(b.bookingMonth);
+  });
+  
+  for (const entry of sorted) {
+    accrualSheet.addRow([
+      entry.productName,
+      entry.customerEmail || "",
+      entry.saleDate || "",
+      formatEuro(entry.totalAmount),
+      entry.spreadType === 'accrual' ? 'Opleiding' : 'Jaarabonnement',
+      entry.spreadMonths,
+      entry.bookingMonth,
+      formatEuro(entry.bookingAmount),
+    ]);
+  }
+}
+```
+
+### Step E: Show accrual summary on results page
+
+In `client/src/pages/results.tsx`, fetch accrual entries and display a summary section.
+
+Add a new API call to get accrual data:
+```typescript
+// Add to the results page query or as a separate query
+const accrualQuery = useQuery({
+  queryKey: [`/api/sessions/${sessionId}/accruals`],
+});
+```
+
+Add the server endpoint:
+```typescript
+app.get("/api/sessions/:sessionId/accruals", async (req, res) => {
+  const entries = await storage.getAccrualEntries(req.params.sessionId);
+  res.json(entries);
+});
+```
+
+On the results page, below the category table, show a collapsible info section:
+```
+ℹ️ Spreidingen in deze periode:
+  Opleidingen: €X totaal → gespreid over Y maanden (€Z/mnd)
+  Jaarabonnementen: €X totaal → gespreid over 12 maanden (€Z/mnd)
+  [Toon details ▼]
+```
+
+### Step F: Include the `getFullResult` response type
+
+Update `getFullResult` in storage to also return accrual entries, and the `ReconciliationResult` interface in `shared/schema.ts` to include `accruals?: AccrualEntry[]`.
+
+---
+
+## FIX 5: Add Missing Category Keywords (15 min)
+
+**Problem:** Several items are falling into "Overig" that should match known categories.
+
+### `shared/schema.ts` — Update REVENUE_CATEGORIES:
+
+**Single Classes — add tai chi:**
+```typescript
+'Single Classes': {
+    keywords: [
+      'single class', 'yoga', 'pilates', 'flow', 'yin', 'vinyasa',
+      'ashtanga', 'hatha', 'restorative', 'breathwork', 'meditation',
+      'sound', 'losse les', 'drop in', 'drop-in', '€15', '€16', '€17', '€18',
+      'class', 'les',
+      'taichi', 'tai chi',                          // ADD
+    ],
+    ...
+}
+```
+
+**Gift Cards — fix regex in `routes.ts` to be case-insensitive:**
+```typescript
+// CHANGE (in categorizeItemByKeywords function):
+if (/^[A-Z0-9]{6,10}$/.test(itemName)) {
+
+// TO:
+if (/^[A-Za-z0-9]{6,10}$/.test(itemName.trim())) {
+```
+
+**Opleidingen — add more training keywords:**
+```typescript
+'Opleidingen': {
+    keywords: [
+      'opleiding', 'teacher training', '200 uur', 'ademcoach',
+      'yogatherapie', 'meditatie tot zelfrealisatie', 'schoolverlichting',
+      'facilitator', 'certification', '300 uur', 'yin yoga training',
+      'pilates teacher training',
+      'kidsyoga', 'mentorship', '50 uur',           // ADD
+    ],
+    ...
+}
+```
+
+**Workshops — add more event keywords:**
+```typescript
+'Workshops & Events': {
+    keywords: [
+      'workshop', 'ceremony', 'cacao', 'tantra', 'truffle',
+      'retreat', 'circle', 'event', 'face yoga', 'new year',
+      'sound bath', 'gong', 'kirtan', 'sound healing',
+      'ayurveda', 'immersion', 'grounding',          // ADD
+    ],
+    ...
+}
+```
+
+---
+
+## FIX 6: Use Momence "Category" Column as Fallback (20 min)
+
+**Problem:** When keyword matching fails, items go to "Overig". But the Momence CSV has a "Category" column (values like "Class", "Membership", "Product", "Workshop") that can serve as a fallback.
+
+### Update `categorizeItem()` signature:
+```typescript
+async function categorizeItem(
+  itemName: string | undefined,
+  momenceCategory: string | undefined,      // ADD this parameter
+  customCategories: CustomCategoryConfig[] | null
+): Promise<CategoryResult> {
+  if (!itemName) {
+    return { category: "Overig", btwRate: 0.09, twinfieldAccount: "8999" };
+  }
+  
+  // 1. Check product database first (existing logic — keep as is)
+  const storedProduct = await storage.getProductByName(itemName);
+  if (storedProduct && storedProduct.isReviewed) {
+    return categorizeItemFromProduct(storedProduct);
+  }
+  
+  // 2. Try keyword matching (existing logic — keep as is)
+  const result = categorizeItemByKeywords(itemName, customCategories);
+  
+  // 3. NEW: If still "Overig", use Momence Category as fallback
+  if (result.category === 'Overig' && momenceCategory) {
+    const mc = momenceCategory.toLowerCase().trim();
+    if (mc === 'class' || mc === 'classes') {
+      return { category: 'Single Classes', btwRate: 0.09, twinfieldAccount: '8120' };
+    }
+    if (mc === 'membership' || mc === 'memberships') {
+      return { category: 'Abonnementen', btwRate: 0.09, twinfieldAccount: '8100' };
+    }
+  }
+  
+  return result;
+}
+```
+
+### Update ALL call sites to pass the Momence Category:
+
+In the `processReconciliation()` function (or both endpoints if Fix 2 isn't done yet):
+```typescript
+// CHANGE:
+const { category, btwRate, twinfieldAccount } = await categorizeItem(item, customCategories);
+
+// TO:
+const { category, btwRate, twinfieldAccount } = await categorizeItem(item, row.Category, customCategories);
+```
+
+Also update `checkForNewProducts()` to pass the Category:
+```typescript
+const categorization = categorizeItemByKeywords(itemName, customCategories);
+// No change needed here since checkForNewProducts only uses keyword matching
+```
+
+---
+
+## FIX 7: Persist Session Results to Database (1-2 hours, OPTIONAL)
+
+**Problem:** Completed reconciliation sessions (results, comparisons, payment methods, categories) are stored in JavaScript Maps inside `MemStorage`. When the server restarts, all session history is lost. The "Eerdere sessies" page will be empty.
+
+Product settings and pending reconciliations already use PostgreSQL. Session results should too.
+
+### What to do:
+1. The tables already exist in `shared/schema.ts` (`reconciliationSessions`, `momenceTransactions`, `customerComparison`, `paymentMethodSummary`, `categorySummary`). Run `npm run db:push` to create them in PostgreSQL if not already done.
+2. Replace the Map-based methods in `MemStorage` with Drizzle database queries, following the same pattern used for `productSettings` and `pendingReconciliations`.
+3. Replace `this.sessions = new Map()` with database calls.
+4. Replace `this.comparisons = new Map()` with database calls.
+5. Same for `paymentMethods`, `categories`, `categoryItems`.
+
+The `categoryItems` data (item breakdown per category) is currently stored as a nested Map. You'll need either a new database table for it, or store it as a JSON column on the `categorySummary` table.
+
+This fix is lower priority — the tool works fine without it, users just need to re-upload if the server restarts.
+
+---
+
+## Implementation Order
+
+```
+Fix 1: Remove dead code                        →  5 min
+Fix 2: Extract shared reconciliation function   → 30 min
+Fix 3: Categorize ALL transactions              → 30 min  (apply inside the shared function)
+Fix 4: Implement accrual/spread logic           →  2-3 hr  (apply inside the shared function)
+Fix 5: Add missing keywords                     → 15 min
+Fix 6: Momence Category fallback                → 20 min
+Fix 7: Persist session results (optional)       →  1-2 hr
+```
+
+Do Fix 2 first. Then Fixes 3, 4, 5, and 6 all go into the single shared function. Fix 7 is optional.
+
+After all changes, run `npm run db:push` to sync the new `accrual_schedule` table to PostgreSQL.

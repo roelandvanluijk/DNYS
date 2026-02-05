@@ -243,14 +243,260 @@ async function checkForNewProducts(
   return newProducts;
 }
 
-interface TempSession {
-  momenceData: MomenceRow[];
-  stripeData: StripeRow[];
-  period: string;
-  customCategories: CustomCategoryConfig[] | null;
-}
+// Shared reconciliation processing function used by both /api/reconcile and /api/reconcile/continue
+async function processReconciliation(
+  momenceData: MomenceRow[],
+  stripeData: StripeRow[],
+  period: string,
+  customCategories: CustomCategoryConfig[] | null
+): Promise<{ sessionId: string }> {
+  
+  const momenceByEmail = new Map<string, number>();
+  const momenceItemsByEmail = new Map<string, Set<string>>();
+  const momenceDatesByEmail = new Map<string, Set<string>>();
+  const momenceCountByEmail = new Map<string, number>();
+  const paymentMethodTotals = new Map<string, { count: number; total: number; isStripe: boolean }>();
+  const categoryTotals = new Map<string, { 
+    count: number; 
+    total: number; 
+    totalTax: number;
+    btwRate: number; 
+    twinfieldAccount: string;
+  }>();
+  const categoryItems = new Map<string, Map<string, { amount: number; count: number; dates: Set<string> }>>();
+  let momenceTotalAll = 0;
+  let nonStripeTotal = 0;
 
-const tempSessions = new Map<string, TempSession>();
+  for (const row of momenceData) {
+    const paymentMethod = row["Payment method"] || "";
+    const saleValue = parseNumber(row["Sale value"]);
+    const tax = parseNumber(row.Tax);
+    const customerEmail = normalizeEmail(row["Customer email"]);
+    const item = row.Item || "";
+    const transactionDate = row["Date"] || "";
+
+    const isStripeMethod = STRIPE_PAYMENT_METHODS.some(
+      (m) => paymentMethod.toLowerCase().includes(m.toLowerCase())
+    );
+
+    const methodData = paymentMethodTotals.get(paymentMethod) || { count: 0, total: 0, isStripe: isStripeMethod };
+    methodData.count++;
+    methodData.total += saleValue;
+    paymentMethodTotals.set(paymentMethod, methodData);
+    momenceTotalAll += saleValue;
+
+    // FIX 3: Categorize ALL transactions, not just Stripe payments
+    const { category, btwRate, twinfieldAccount } = await categorizeItem(item, customCategories);
+    const catData = categoryTotals.get(category) || { 
+      count: 0, 
+      total: 0, 
+      totalTax: 0,
+      btwRate, 
+      twinfieldAccount 
+    };
+    catData.count++;
+    catData.total += saleValue;
+    catData.totalTax += tax;
+    categoryTotals.set(category, catData);
+    
+    // Track item details per category (for ALL payment methods)
+    const itemName = item || "Onbekend";
+    if (!categoryItems.has(category)) {
+      categoryItems.set(category, new Map());
+    }
+    const itemsMap = categoryItems.get(category)!;
+    const itemData = itemsMap.get(itemName) || { amount: 0, count: 0, dates: new Set<string>() };
+    itemData.amount += saleValue;
+    itemData.count++;
+    if (transactionDate) itemData.dates.add(transactionDate);
+    itemsMap.set(itemName, itemData);
+
+    // Stripe-specific: only aggregate by email for Stripe reconciliation matching
+    if (isStripeMethod) {
+      if (customerEmail) {
+        const current = momenceByEmail.get(customerEmail) || 0;
+        momenceByEmail.set(customerEmail, current + saleValue);
+        
+        const items = momenceItemsByEmail.get(customerEmail) || new Set<string>();
+        if (item) items.add(item);
+        momenceItemsByEmail.set(customerEmail, items);
+        
+        const dates = momenceDatesByEmail.get(customerEmail) || new Set<string>();
+        if (transactionDate) dates.add(transactionDate);
+        momenceDatesByEmail.set(customerEmail, dates);
+        
+        const count = momenceCountByEmail.get(customerEmail) || 0;
+        momenceCountByEmail.set(customerEmail, count + 1);
+      }
+    } else {
+      nonStripeTotal += saleValue;
+    }
+  }
+
+  const stripeByEmail = new Map<string, { amount: number; fee: number }>();
+  let stripeTotalAmount = 0;
+  let stripeTotalFees = 0;
+
+  for (const row of stripeData) {
+    const reportingCategory = row.reporting_category?.toLowerCase() || "";
+    const status = row.Status?.toLowerCase() || "";
+    
+    const isCharge = reportingCategory === "charge" || status === "paid";
+    if (!isCharge) continue;
+
+    const email = normalizeEmail(row.customer_email || row["Customer Email"]);
+    if (!email) continue;
+
+    const amount = parseNumber(row.gross || row.Amount);
+    const fee = parseNumber(row.fee || row.Fee);
+
+    stripeTotalAmount += amount;
+    stripeTotalFees += fee;
+
+    const current = stripeByEmail.get(email) || { amount: 0, fee: 0 };
+    current.amount += amount;
+    current.fee += fee;
+    stripeByEmail.set(email, current);
+  }
+
+  const allEmails = Array.from(new Set([
+    ...Array.from(momenceByEmail.keys()), 
+    ...Array.from(stripeByEmail.keys())
+  ]));
+  const comparisons: Array<{
+    sessionId: string;
+    customerEmail: string;
+    momenceTotal: number;
+    stripeAmount: number;
+    stripeFee: number;
+    stripeNet: number;
+    difference: number;
+    matchStatus: MatchStatus;
+    items: string;
+    transactionDate: string;
+    transactionCount: number;
+  }> = [];
+
+  let matchedCount = 0;
+  let unmatchedCount = 0;
+
+  for (const email of allEmails) {
+    // Skip excluded emails (studio's own email addresses)
+    if (EXCLUDED_EMAILS.includes(email.toLowerCase())) {
+      continue;
+    }
+    
+    const momenceTotal = momenceByEmail.get(email) || 0;
+    const stripeEmailData = stripeByEmail.get(email) || { amount: 0, fee: 0 };
+    const stripeNet = stripeEmailData.amount - stripeEmailData.fee;
+    const difference = momenceTotal - stripeEmailData.amount;
+
+    let matchStatus: MatchStatus;
+    if (momenceTotal > 0 && stripeEmailData.amount === 0) {
+      matchStatus = "only_in_momence";
+    } else if (momenceTotal === 0 && stripeEmailData.amount > 0) {
+      matchStatus = "only_in_stripe";
+    } else {
+      matchStatus = getMatchStatus(difference);
+    }
+
+    if (matchStatus === "match") {
+      matchedCount++;
+    } else {
+      unmatchedCount++;
+    }
+
+    const customerItems = momenceItemsByEmail.get(email);
+    const customerDates = momenceDatesByEmail.get(email);
+    const customerCount = momenceCountByEmail.get(email) || 0;
+
+    comparisons.push({
+      sessionId: "",
+      customerEmail: email,
+      momenceTotal,
+      stripeAmount: stripeEmailData.amount,
+      stripeFee: stripeEmailData.fee,
+      stripeNet,
+      difference,
+      matchStatus,
+      items: customerItems ? Array.from(customerItems).join(", ") : "",
+      transactionDate: customerDates ? Array.from(customerDates).join(", ") : "",
+      transactionCount: customerCount,
+    });
+  }
+
+  comparisons.sort((a, b) => Math.abs(b.difference) - Math.abs(a.difference));
+
+  const momenceStripeTotal = Array.from(momenceByEmail.values()).reduce((a, b) => a + b, 0);
+  const stripeNetTotal = stripeTotalAmount - stripeTotalFees;
+
+  const session = await storage.createSession({
+    period,
+    momenceTotal: momenceStripeTotal,
+    stripeTotal: stripeTotalAmount,
+    stripeFees: stripeTotalFees,
+    stripeNet: stripeNetTotal,
+    nonStripeTotal,
+    matchedCount,
+    unmatchedCount,
+    status: "completed",
+  });
+
+  const comparisonsWithSession = comparisons.map((c) => ({
+    ...c,
+    sessionId: session.id,
+  }));
+  await storage.addComparisons(session.id, comparisonsWithSession);
+
+  const sortedMethods = Array.from(paymentMethodTotals.entries())
+    .sort((a, b) => b[1].total - a[1].total);
+
+  const paymentMethods = sortedMethods.map(([method, data]) => ({
+    sessionId: session.id,
+    paymentMethod: method || "Onbekend",
+    transactionCount: data.count,
+    totalAmount: data.total,
+    percentage: momenceTotalAll > 0 ? (data.total / momenceTotalAll) * 100 : 0,
+    goesThruStripe: data.isStripe ? 1 : 0,
+  }));
+
+  await storage.addPaymentMethods(session.id, paymentMethods);
+
+  const categoryTotal = Array.from(categoryTotals.values()).reduce((a, b) => a + b.total, 0);
+  const sortedCategories = Array.from(categoryTotals.entries())
+    .sort((a, b) => b[1].total - a[1].total);
+
+  const categories = sortedCategories.map(([category, data]) => ({
+    sessionId: session.id,
+    category,
+    transactionCount: data.count,
+    totalAmount: data.total,
+    totalTax: data.totalTax,
+    btwRate: data.btwRate,
+    twinfieldAccount: data.twinfieldAccount,
+    percentage: categoryTotal > 0 ? (data.total / categoryTotal) * 100 : 0,
+  }));
+
+  await storage.addCategories(session.id, categories);
+
+  // Save category item details
+  const categoryItemsArray = Array.from(categoryItems.entries());
+  for (let i = 0; i < categoryItemsArray.length; i++) {
+    const [categoryName, catItemsMap] = categoryItemsArray[i];
+    const itemsArray = Array.from(catItemsMap.entries());
+    const items = itemsArray
+      .map((entry) => ({
+        item: entry[0],
+        amount: entry[1].amount,
+        count: entry[1].count,
+        date: Array.from(entry[1].dates).sort().join(', '),
+      }))
+      .sort((a, b) => b.amount - a.amount);
+    await storage.addCategoryItems(session.id, categoryName, items);
+  }
+
+  return { sessionId: session.id };
+}
 
 export async function registerRoutes(
   httpServer: Server,
@@ -372,249 +618,9 @@ export async function registerRoutes(
         }
       }
 
-      const momenceByEmail = new Map<string, number>();
-      const momenceItemsByEmail = new Map<string, Set<string>>();
-      const momenceDatesByEmail = new Map<string, Set<string>>();
-      const momenceCountByEmail = new Map<string, number>();
-      const paymentMethodTotals = new Map<string, { count: number; total: number; isStripe: boolean }>();
-      const categoryTotals = new Map<string, { 
-        count: number; 
-        total: number; 
-        totalTax: number;
-        btwRate: number; 
-        twinfieldAccount: string;
-      }>();
-      const categoryItems = new Map<string, Map<string, { amount: number; count: number; dates: Set<string> }>>();
-      let momenceTotalAll = 0;
-      let nonStripeTotal = 0;
-
-      for (const row of momenceResult.data) {
-        const paymentMethod = row["Payment method"] || "";
-        const saleValue = parseNumber(row["Sale value"]);
-        const tax = parseNumber(row.Tax);
-        const customerEmail = normalizeEmail(row["Customer email"]);
-        const item = row.Item || "";
-        const transactionDate = row["Date"] || "";
-
-        const isStripeMethod = STRIPE_PAYMENT_METHODS.some(
-          (m) => paymentMethod.toLowerCase().includes(m.toLowerCase())
-        );
-
-        const methodData = paymentMethodTotals.get(paymentMethod) || { count: 0, total: 0, isStripe: isStripeMethod };
-        methodData.count++;
-        methodData.total += saleValue;
-        paymentMethodTotals.set(paymentMethod, methodData);
-        momenceTotalAll += saleValue;
-
-        if (isStripeMethod) {
-          if (customerEmail) {
-            const current = momenceByEmail.get(customerEmail) || 0;
-            momenceByEmail.set(customerEmail, current + saleValue);
-            
-            const items = momenceItemsByEmail.get(customerEmail) || new Set<string>();
-            if (item) items.add(item);
-            momenceItemsByEmail.set(customerEmail, items);
-            
-            const dates = momenceDatesByEmail.get(customerEmail) || new Set<string>();
-            if (transactionDate) dates.add(transactionDate);
-            momenceDatesByEmail.set(customerEmail, dates);
-            
-            const count = momenceCountByEmail.get(customerEmail) || 0;
-            momenceCountByEmail.set(customerEmail, count + 1);
-          }
-          
-          const { category, btwRate, twinfieldAccount } = await categorizeItem(item, customCategories);
-          const catData = categoryTotals.get(category) || { 
-            count: 0, 
-            total: 0, 
-            totalTax: 0,
-            btwRate, 
-            twinfieldAccount 
-          };
-          catData.count++;
-          catData.total += saleValue;
-          catData.totalTax += tax;
-          categoryTotals.set(category, catData);
-          
-          // Track item details per category
-          const itemName = item || "Onbekend";
-          if (!categoryItems.has(category)) {
-            categoryItems.set(category, new Map());
-          }
-          const itemsMap = categoryItems.get(category)!;
-          const itemData = itemsMap.get(itemName) || { amount: 0, count: 0, dates: new Set<string>() };
-          itemData.amount += saleValue;
-          itemData.count++;
-          if (transactionDate) itemData.dates.add(transactionDate);
-          itemsMap.set(itemName, itemData);
-        } else {
-          nonStripeTotal += saleValue;
-        }
-      }
-
-      const stripeByEmail = new Map<string, { amount: number; fee: number }>();
-      let stripeTotalAmount = 0;
-      let stripeTotalFees = 0;
-
-      for (const row of stripeResult.data) {
-        const reportingCategory = row.reporting_category?.toLowerCase() || "";
-        const status = row.Status?.toLowerCase() || "";
-        
-        const isCharge = reportingCategory === "charge" || status === "paid";
-        if (!isCharge) continue;
-
-        const email = normalizeEmail(row.customer_email || row["Customer Email"]);
-        if (!email) continue;
-
-        const amount = parseNumber(row.gross || row.Amount);
-        const fee = parseNumber(row.fee || row.Fee);
-
-        stripeTotalAmount += amount;
-        stripeTotalFees += fee;
-
-        const current = stripeByEmail.get(email) || { amount: 0, fee: 0 };
-        current.amount += amount;
-        current.fee += fee;
-        stripeByEmail.set(email, current);
-      }
-
-      const allEmails = Array.from(new Set([
-        ...Array.from(momenceByEmail.keys()), 
-        ...Array.from(stripeByEmail.keys())
-      ]));
-      const comparisons: Array<{
-        sessionId: string;
-        customerEmail: string;
-        momenceTotal: number;
-        stripeAmount: number;
-        stripeFee: number;
-        stripeNet: number;
-        difference: number;
-        matchStatus: MatchStatus;
-        items: string;
-        transactionDate: string;
-        transactionCount: number;
-      }> = [];
-
-      let matchedCount = 0;
-      let unmatchedCount = 0;
-
-      for (const email of allEmails) {
-        // Skip excluded emails (studio's own email addresses)
-        if (EXCLUDED_EMAILS.includes(email.toLowerCase())) {
-          continue;
-        }
-        
-        const momenceTotal = momenceByEmail.get(email) || 0;
-        const stripeData = stripeByEmail.get(email) || { amount: 0, fee: 0 };
-        const stripeNet = stripeData.amount - stripeData.fee;
-        const difference = momenceTotal - stripeData.amount;
-
-        let matchStatus: MatchStatus;
-        if (momenceTotal > 0 && stripeData.amount === 0) {
-          matchStatus = "only_in_momence";
-        } else if (momenceTotal === 0 && stripeData.amount > 0) {
-          matchStatus = "only_in_stripe";
-        } else {
-          matchStatus = getMatchStatus(difference);
-        }
-
-        if (matchStatus === "match") {
-          matchedCount++;
-        } else {
-          unmatchedCount++;
-        }
-
-        const customerItems = momenceItemsByEmail.get(email);
-        const customerDates = momenceDatesByEmail.get(email);
-        const customerCount = momenceCountByEmail.get(email) || 0;
-
-        comparisons.push({
-          sessionId: "",
-          customerEmail: email,
-          momenceTotal,
-          stripeAmount: stripeData.amount,
-          stripeFee: stripeData.fee,
-          stripeNet,
-          difference,
-          matchStatus,
-          items: customerItems ? Array.from(customerItems).join(", ") : "",
-          transactionDate: customerDates ? Array.from(customerDates).join(", ") : "",
-          transactionCount: customerCount,
-        });
-      }
-
-      comparisons.sort((a, b) => Math.abs(b.difference) - Math.abs(a.difference));
-
-      const momenceStripeTotal = Array.from(momenceByEmail.values()).reduce((a, b) => a + b, 0);
-      const stripeNetTotal = stripeTotalAmount - stripeTotalFees;
-
-      const session = await storage.createSession({
-        period,
-        momenceTotal: momenceStripeTotal,
-        stripeTotal: stripeTotalAmount,
-        stripeFees: stripeTotalFees,
-        stripeNet: stripeNetTotal,
-        nonStripeTotal,
-        matchedCount,
-        unmatchedCount,
-        status: "completed",
-      });
-
-      const comparisonsWithSession = comparisons.map((c) => ({
-        ...c,
-        sessionId: session.id,
-      }));
-      await storage.addComparisons(session.id, comparisonsWithSession);
-
-      const sortedMethods = Array.from(paymentMethodTotals.entries())
-        .sort((a, b) => b[1].total - a[1].total);
-
-      const paymentMethods = sortedMethods.map(([method, data]) => ({
-        sessionId: session.id,
-        paymentMethod: method || "Onbekend",
-        transactionCount: data.count,
-        totalAmount: data.total,
-        percentage: momenceTotalAll > 0 ? (data.total / momenceTotalAll) * 100 : 0,
-        goesThruStripe: data.isStripe ? 1 : 0,
-      }));
-
-      await storage.addPaymentMethods(session.id, paymentMethods);
-
-      const categoryTotal = Array.from(categoryTotals.values()).reduce((a, b) => a + b.total, 0);
-      const sortedCategories = Array.from(categoryTotals.entries())
-        .sort((a, b) => b[1].total - a[1].total);
-
-      const categories = sortedCategories.map(([category, data]) => ({
-        sessionId: session.id,
-        category,
-        transactionCount: data.count,
-        totalAmount: data.total,
-        totalTax: data.totalTax,
-        btwRate: data.btwRate,
-        twinfieldAccount: data.twinfieldAccount,
-        percentage: categoryTotal > 0 ? (data.total / categoryTotal) * 100 : 0,
-      }));
-
-      await storage.addCategories(session.id, categories);
-
-      // Save category item details
-      const categoryItemsArray = Array.from(categoryItems.entries());
-      for (let i = 0; i < categoryItemsArray.length; i++) {
-        const [categoryName, itemsMap] = categoryItemsArray[i];
-        const itemsArray = Array.from(itemsMap.entries());
-        const items = itemsArray
-          .map((entry) => ({
-            item: entry[0],
-            amount: entry[1].amount,
-            count: entry[1].count,
-            date: Array.from(entry[1].dates).sort().join(', '),
-          }))
-          .sort((a, b) => b.amount - a.amount); // Sort by amount descending
-        await storage.addCategoryItems(session.id, categoryName, items);
-      }
-
-      res.json({ success: true, sessionId: session.id });
+      // Use the shared processing function
+      const result = await processReconciliation(momenceResult.data, stripeResult.data, period, customCategories);
+      res.json({ success: true, sessionId: result.sessionId });
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : "Onbekende fout";
       const errorStack = error instanceof Error ? error.stack : undefined;
@@ -1168,245 +1174,11 @@ export async function registerRoutes(
       // Fetch custom category settings
       const customCategories = await storage.getCategorySettings();
 
-      const momenceByEmail = new Map<string, number>();
-      const momenceItemsByEmail = new Map<string, Set<string>>();
-      const momenceDatesByEmail = new Map<string, Set<string>>();
-      const momenceCountByEmail = new Map<string, number>();
-      const paymentMethodTotals = new Map<string, { count: number; total: number; isStripe: boolean }>();
-      const categoryTotals = new Map<string, { 
-        count: number; 
-        total: number; 
-        totalTax: number;
-        btwRate: number; 
-        twinfieldAccount: string;
-      }>();
-      const categoryItems = new Map<string, Map<string, { amount: number; count: number; dates: Set<string> }>>();
-      let momenceTotalAll = 0;
-      let nonStripeTotal = 0;
-
-      for (const row of momenceData) {
-        const paymentMethod = row["Payment method"] || "";
-        const saleValue = parseNumber(row["Sale value"]);
-        const tax = parseNumber(row.Tax);
-        const customerEmail = normalizeEmail(row["Customer email"]);
-        const item = row.Item || "";
-        const transactionDate = row["Date"] || "";
-
-        const isStripeMethod = STRIPE_PAYMENT_METHODS.some(
-          (m) => paymentMethod.toLowerCase().includes(m.toLowerCase())
-        );
-
-        const methodData = paymentMethodTotals.get(paymentMethod) || { count: 0, total: 0, isStripe: isStripeMethod };
-        methodData.count++;
-        methodData.total += saleValue;
-        paymentMethodTotals.set(paymentMethod, methodData);
-        momenceTotalAll += saleValue;
-
-        if (isStripeMethod) {
-          if (customerEmail) {
-            const current = momenceByEmail.get(customerEmail) || 0;
-            momenceByEmail.set(customerEmail, current + saleValue);
-            
-            const items = momenceItemsByEmail.get(customerEmail) || new Set<string>();
-            if (item) items.add(item);
-            momenceItemsByEmail.set(customerEmail, items);
-            
-            const dates = momenceDatesByEmail.get(customerEmail) || new Set<string>();
-            if (transactionDate) dates.add(transactionDate);
-            momenceDatesByEmail.set(customerEmail, dates);
-            
-            const count = momenceCountByEmail.get(customerEmail) || 0;
-            momenceCountByEmail.set(customerEmail, count + 1);
-          }
-          
-          const { category, btwRate, twinfieldAccount } = await categorizeItem(item, customCategories);
-          const catData = categoryTotals.get(category) || { 
-            count: 0, 
-            total: 0, 
-            totalTax: 0,
-            btwRate, 
-            twinfieldAccount 
-          };
-          catData.count++;
-          catData.total += saleValue;
-          catData.totalTax += tax;
-          categoryTotals.set(category, catData);
-          
-          const itemName = item || "Onbekend";
-          if (!categoryItems.has(category)) {
-            categoryItems.set(category, new Map());
-          }
-          const itemsMap = categoryItems.get(category)!;
-          const itemData = itemsMap.get(itemName) || { amount: 0, count: 0, dates: new Set<string>() };
-          itemData.amount += saleValue;
-          itemData.count++;
-          if (transactionDate) itemData.dates.add(transactionDate);
-          itemsMap.set(itemName, itemData);
-        } else {
-          nonStripeTotal += saleValue;
-        }
-      }
-
-      const stripeByEmail = new Map<string, { amount: number; fee: number }>();
-      let stripeTotalAmount = 0;
-      let stripeTotalFees = 0;
-
-      for (const row of stripeData) {
-        const reportingCategory = row.reporting_category?.toLowerCase() || "";
-        const status = row.Status?.toLowerCase() || "";
-        
-        const isCharge = reportingCategory === "charge" || status === "paid";
-        if (!isCharge) continue;
-
-        const email = normalizeEmail(row.customer_email || row["Customer Email"]);
-        if (!email) continue;
-
-        const amount = parseNumber(row.gross || row.Amount);
-        const fee = parseNumber(row.fee || row.Fee);
-
-        stripeTotalAmount += amount;
-        stripeTotalFees += fee;
-
-        const current = stripeByEmail.get(email) || { amount: 0, fee: 0 };
-        current.amount += amount;
-        current.fee += fee;
-        stripeByEmail.set(email, current);
-      }
-
-      const allEmails = Array.from(new Set([
-        ...Array.from(momenceByEmail.keys()), 
-        ...Array.from(stripeByEmail.keys())
-      ]));
-      const comparisons: Array<{
-        sessionId: string;
-        customerEmail: string;
-        momenceTotal: number;
-        stripeAmount: number;
-        stripeFee: number;
-        stripeNet: number;
-        difference: number;
-        matchStatus: MatchStatus;
-        items: string;
-        transactionDate: string;
-        transactionCount: number;
-      }> = [];
-
-      let matchedCount = 0;
-      let unmatchedCount = 0;
-
-      for (const email of allEmails) {
-        if (EXCLUDED_EMAILS.includes(email.toLowerCase())) {
-          continue;
-        }
-        
-        const momenceTotal = momenceByEmail.get(email) || 0;
-        const stripeEmailData = stripeByEmail.get(email) || { amount: 0, fee: 0 };
-        const stripeNet = stripeEmailData.amount - stripeEmailData.fee;
-        const difference = momenceTotal - stripeEmailData.amount;
-
-        let matchStatus: MatchStatus;
-        if (momenceTotal > 0 && stripeEmailData.amount === 0) {
-          matchStatus = "only_in_momence";
-        } else if (momenceTotal === 0 && stripeEmailData.amount > 0) {
-          matchStatus = "only_in_stripe";
-        } else {
-          matchStatus = getMatchStatus(difference);
-        }
-
-        if (matchStatus === "match") {
-          matchedCount++;
-        } else {
-          unmatchedCount++;
-        }
-
-        const customerItems = momenceItemsByEmail.get(email);
-        const customerDates = momenceDatesByEmail.get(email);
-        const customerCount = momenceCountByEmail.get(email) || 0;
-
-        comparisons.push({
-          sessionId: "",
-          customerEmail: email,
-          momenceTotal,
-          stripeAmount: stripeEmailData.amount,
-          stripeFee: stripeEmailData.fee,
-          stripeNet,
-          difference,
-          matchStatus,
-          items: customerItems ? Array.from(customerItems).join(", ") : "",
-          transactionDate: customerDates ? Array.from(customerDates).join(", ") : "",
-          transactionCount: customerCount,
-        });
-      }
-
-      comparisons.sort((a, b) => Math.abs(b.difference) - Math.abs(a.difference));
-
-      const momenceStripeTotal = Array.from(momenceByEmail.values()).reduce((a, b) => a + b, 0);
-      const stripeNetTotal = stripeTotalAmount - stripeTotalFees;
-
-      const session = await storage.createSession({
-        period,
-        momenceTotal: momenceStripeTotal,
-        stripeTotal: stripeTotalAmount,
-        stripeFees: stripeTotalFees,
-        stripeNet: stripeNetTotal,
-        nonStripeTotal,
-        matchedCount,
-        unmatchedCount,
-        status: "completed",
-      });
-
-      const comparisonsWithSession = comparisons.map((c) => ({
-        ...c,
-        sessionId: session.id,
-      }));
-      await storage.addComparisons(session.id, comparisonsWithSession);
-
-      const sortedMethods = Array.from(paymentMethodTotals.entries())
-        .sort((a, b) => b[1].total - a[1].total);
-
-      const paymentMethods = sortedMethods.map(([method, data]) => ({
-        sessionId: session.id,
-        paymentMethod: method || "Onbekend",
-        transactionCount: data.count,
-        totalAmount: data.total,
-        percentage: momenceTotalAll > 0 ? (data.total / momenceTotalAll) * 100 : 0,
-        goesThruStripe: data.isStripe ? 1 : 0,
-      }));
-      await storage.addPaymentMethods(session.id, paymentMethods);
-
-      const categoryTotal = Array.from(categoryTotals.values()).reduce((a, b) => a + b.total, 0);
-      const sortedCategories = Array.from(categoryTotals.entries())
-        .sort((a, b) => b[1].total - a[1].total);
-
-      const categories = sortedCategories.map(([category, data]) => ({
-        sessionId: session.id,
-        category,
-        transactionCount: data.count,
-        totalAmount: data.total,
-        totalTax: data.totalTax,
-        btwRate: data.btwRate,
-        twinfieldAccount: data.twinfieldAccount,
-        percentage: categoryTotal > 0 ? (data.total / categoryTotal) * 100 : 0,
-      }));
-      await storage.addCategories(session.id, categories);
-
-      const categoryItemsArray = Array.from(categoryItems.entries());
-      for (let i = 0; i < categoryItemsArray.length; i++) {
-        const [categoryName, itemsMap] = categoryItemsArray[i];
-        const itemsArray = Array.from(itemsMap.entries());
-        const items = itemsArray
-          .map((entry) => ({
-            item: entry[0],
-            amount: entry[1].amount,
-            count: entry[1].count,
-            date: Array.from(entry[1].dates).sort().join(', '),
-          }))
-          .sort((a, b) => b.amount - a.amount);
-        await storage.addCategoryItems(session.id, categoryName, items);
-      }
-
-      console.log("Continue reconciliation completed, sessionId:", session.id);
-      res.json({ success: true, sessionId: session.id });
+      // Use the shared processing function
+      const result = await processReconciliation(momenceData, stripeData, period, customCategories);
+      
+      console.log("Continue reconciliation completed, sessionId:", result.sessionId);
+      res.json({ success: true, sessionId: result.sessionId });
     } catch (error) {
       console.error("=== CONTINUE RECONCILIATION ERROR ===");
       console.error("Error:", error);
