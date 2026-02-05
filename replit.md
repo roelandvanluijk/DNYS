@@ -186,3 +186,12 @@ Old format: `Amount`, `Fee`, `Customer Email`, `Status`
 - Persistent pending reconciliations survive server restarts
 - Two save options on review page: "Alleen Opslaan" vs "Opslaan & Doorgaan"
 - Clear all products feature for testing/reset
+
+**February 2026: Performance & Period Locking**
+- Major performance optimization: Product cache reduces database queries from 2000+ to 1
+- Category settings now persist in database (categorySettings table) instead of memory
+- Added payment method settings table with Twinfield ledger numbers for future XML export
+- Period locking feature with lock/unlock API endpoints
+- Results page shows "Periode Afsluiten" button with confirmation dialog
+- Locked periods show amber "Vergrendeld" badge with option to reopen
+- Session fields: isLocked, lockedAt, lockedBy for tracking lock status

@@ -81,6 +81,42 @@ export const insertAccrualScheduleSchema = createInsertSchema(accrualSchedule).o
 export type InsertAccrualEntry = z.infer<typeof insertAccrualScheduleSchema>;
 export type AccrualEntry = typeof accrualSchedule.$inferSelect;
 
+// Category settings stored in database (persisted across restarts)
+export const categorySettings = pgTable("category_settings", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull().unique(),
+  twinfieldAccount: text("twinfield_account").notNull(),
+  btwRate: real("btw_rate").notNull(),
+  keywords: text("keywords").notNull(), // JSON array stored as text
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertCategorySettingsSchema = createInsertSchema(categorySettings).omit({
+  id: true,
+  updatedAt: true,
+});
+
+export type InsertCategorySettings = z.infer<typeof insertCategorySettingsSchema>;
+export type CategorySettingsDB = typeof categorySettings.$inferSelect;
+
+// Payment method ledger numbers for Twinfield XML export
+export const paymentMethodSettings = pgTable("payment_method_settings", {
+  id: serial("id").primaryKey(),
+  methodName: text("method_name").notNull().unique(),
+  twinfieldAccount: text("twinfield_account"),
+  description: text("description"),
+  isStripeMethod: boolean("is_stripe_method").default(false),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertPaymentMethodSettingsSchema = createInsertSchema(paymentMethodSettings).omit({
+  id: true,
+  updatedAt: true,
+});
+
+export type InsertPaymentMethodSettings = z.infer<typeof insertPaymentMethodSettingsSchema>;
+export type PaymentMethodSettingsDB = typeof paymentMethodSettings.$inferSelect;
+
 export const reconciliationSessions = pgTable("reconciliation_sessions", {
   id: varchar("id").primaryKey(),
   period: text("period").notNull(),
@@ -93,6 +129,9 @@ export const reconciliationSessions = pgTable("reconciliation_sessions", {
   matchedCount: integer("matched_count").default(0),
   unmatchedCount: integer("unmatched_count").default(0),
   status: text("status").default("completed"),
+  isLocked: boolean("is_locked").default(false),
+  lockedAt: timestamp("locked_at"),
+  lockedBy: text("locked_by"),
 });
 
 export const momenceTransactions = pgTable("momence_transactions", {

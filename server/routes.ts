@@ -556,6 +556,9 @@ async function processReconciliation(
     matchedCount,
     unmatchedCount,
     status: "completed",
+    isLocked: false,
+    lockedAt: null,
+    lockedBy: null,
   });
 
   const comparisonsWithSession = comparisons.map((c) => ({
@@ -805,6 +808,49 @@ export async function registerRoutes(
       res.json(entries);
     } catch (error) {
       res.status(500).json({ error: "Kon spreidingsgegevens niet laden" });
+    }
+  });
+
+  // Lock/unlock a session (period closing)
+  app.post("/api/sessions/:sessionId/lock", async (req, res) => {
+    try {
+      const { sessionId } = req.params;
+      const session = await storage.getSession(sessionId);
+      if (!session) {
+        return res.status(404).json({ error: "Sessie niet gevonden" });
+      }
+      
+      const updatedSession = await storage.updateSession(sessionId, {
+        isLocked: true,
+        lockedAt: new Date(),
+        lockedBy: "user",
+      });
+      
+      res.json({ success: true, session: updatedSession });
+    } catch (error) {
+      console.error("Lock session error:", error);
+      res.status(500).json({ error: "Kon periode niet afsluiten" });
+    }
+  });
+
+  app.post("/api/sessions/:sessionId/unlock", async (req, res) => {
+    try {
+      const { sessionId } = req.params;
+      const session = await storage.getSession(sessionId);
+      if (!session) {
+        return res.status(404).json({ error: "Sessie niet gevonden" });
+      }
+      
+      const updatedSession = await storage.updateSession(sessionId, {
+        isLocked: false,
+        lockedAt: null,
+        lockedBy: null,
+      });
+      
+      res.json({ success: true, session: updatedSession });
+    } catch (error) {
+      console.error("Unlock session error:", error);
+      res.status(500).json({ error: "Kon periode niet heropenen" });
     }
   });
 
@@ -1170,6 +1216,51 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Reset categories error:", error);
       res.status(500).json({ error: "Kon categorieën niet resetten" });
+    }
+  });
+
+  // Payment method settings for Twinfield XML export
+  app.get("/api/settings/payment-methods", async (req, res) => {
+    try {
+      const methods = await storage.getAllPaymentMethodSettings();
+      res.json(methods);
+    } catch (error) {
+      console.error("Get payment method settings error:", error);
+      res.status(500).json({ error: "Kon betaalmethode instellingen niet ophalen" });
+    }
+  });
+
+  app.post("/api/settings/payment-methods", async (req, res) => {
+    try {
+      const { methodName, twinfieldAccount, isStripeMethod } = req.body;
+      if (!methodName) {
+        return res.status(400).json({ error: "methodName is verplicht" });
+      }
+      await storage.savePaymentMethodSettings(methodName, twinfieldAccount || "", isStripeMethod || false);
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Save payment method settings error:", error);
+      res.status(500).json({ error: "Kon betaalmethode instellingen niet opslaan" });
+    }
+  });
+
+  app.post("/api/settings/payment-methods/batch", async (req, res) => {
+    try {
+      const { methods } = req.body;
+      if (!Array.isArray(methods)) {
+        return res.status(400).json({ error: "methods array is verplicht" });
+      }
+      for (const method of methods) {
+        await storage.savePaymentMethodSettings(
+          method.methodName, 
+          method.twinfieldAccount || "", 
+          method.isStripeMethod || false
+        );
+      }
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Save payment method settings batch error:", error);
+      res.status(500).json({ error: "Kon betaalmethode instellingen niet opslaan" });
     }
   });
 

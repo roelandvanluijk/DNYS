@@ -18,8 +18,24 @@ import {
   ChevronDown,
   ChevronUp,
   AlertCircle,
-  Users
+  Users,
+  Lock,
+  Unlock
 } from "lucide-react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { apiRequest } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import type { ReconciliationResult, CustomerComparison, PaymentMethodSummary, CategoryWithDetails } from "@shared/schema";
 import dnysLogo from "@/assets/dnys-logo.svg";
 
@@ -377,6 +393,8 @@ function LoadingSkeleton() {
 export default function ResultsPage() {
   const params = useParams<{ sessionId: string }>();
   const [, navigate] = useLocation();
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
   const [filter, setFilter] = useState<"all" | "matched" | "differences">("all");
   const [showPaymentMethods, setShowPaymentMethods] = useState(false);
   const [showCustomers, setShowCustomers] = useState(false);
@@ -403,6 +421,48 @@ export default function ResultsPage() {
   const { data, isLoading, error } = useQuery<ReconciliationResult>({
     queryKey: ["/api/sessions", params.sessionId],
   });
+
+  const lockMutation = useMutation({
+    mutationFn: async () => {
+      return apiRequest("POST", `/api/sessions/${params.sessionId}/lock`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/sessions", params.sessionId] });
+      toast({
+        title: "Periode afgesloten",
+        description: "Deze periode is nu vergrendeld en kan niet meer worden gewijzigd.",
+      });
+    },
+    onError: () => {
+      toast({
+        title: "Fout",
+        description: "Er is iets misgegaan bij het afsluiten van de periode.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const unlockMutation = useMutation({
+    mutationFn: async () => {
+      return apiRequest("POST", `/api/sessions/${params.sessionId}/unlock`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/sessions", params.sessionId] });
+      toast({
+        title: "Periode heropend",
+        description: "Deze periode kan nu weer worden bewerkt.",
+      });
+    },
+    onError: () => {
+      toast({
+        title: "Fout",
+        description: "Er is iets misgegaan bij het heropenen van de periode.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const isLocked = data?.session?.isLocked || false;
 
   const handleDownload = () => {
     window.open(`/api/sessions/${params.sessionId}/download`, "_blank");
@@ -482,10 +542,59 @@ export default function ResultsPage() {
               </div>
             </div>
           </div>
-          <Button onClick={handleDownload} disabled={isLoading} data-testid="button-download">
-            <Download className="w-4 h-4 mr-2" />
-            Download Excel
-          </Button>
+          <div className="flex items-center gap-2">
+            {isLocked ? (
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button variant="outline" className="gap-2 text-amber-600 border-amber-300 bg-amber-50" disabled={unlockMutation.isPending} data-testid="button-unlock">
+                    <Lock className="w-4 h-4" />
+                    {unlockMutation.isPending ? "Bezig..." : "Vergrendeld"}
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Periode heropenen?</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      Weet je zeker dat je deze periode wilt heropenen? Hierdoor kunnen gegevens worden gewijzigd.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>Annuleren</AlertDialogCancel>
+                    <AlertDialogAction onClick={() => unlockMutation.mutate()}>
+                      Heropenen
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            ) : (
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button variant="outline" className="gap-2" disabled={lockMutation.isPending} data-testid="button-lock">
+                    <Unlock className="w-4 h-4" />
+                    {lockMutation.isPending ? "Bezig..." : "Periode Afsluiten"}
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Periode afsluiten?</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      Weet je zeker dat je deze periode wilt afsluiten? Na afsluiting kunnen gegevens niet meer worden gewijzigd zonder de periode eerst te heropenen.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>Annuleren</AlertDialogCancel>
+                    <AlertDialogAction onClick={() => lockMutation.mutate()}>
+                      Afsluiten
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            )}
+            <Button onClick={handleDownload} disabled={isLoading} data-testid="button-download">
+              <Download className="w-4 h-4 mr-2" />
+              Download Excel
+            </Button>
+          </div>
         </div>
       </header>
 

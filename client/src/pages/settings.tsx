@@ -4,15 +4,16 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
 import { 
   ArrowLeft, 
   Save,
   Settings,
-  RotateCcw
+  RotateCcw,
+  CreditCard
 } from "lucide-react";
 import dnysLogo from "@/assets/dnys-logo.svg";
 import { apiRequest } from "@/lib/queryClient";
@@ -25,15 +26,39 @@ interface CategoryConfig {
   group: "yoga" | "horeca";
 }
 
+interface PaymentMethodConfig {
+  id?: number;
+  methodName: string;
+  twinfieldAccount: string;
+  isStripeMethod: boolean;
+}
+
+const DEFAULT_PAYMENT_METHODS: PaymentMethodConfig[] = [
+  { methodName: "Card", twinfieldAccount: "", isStripeMethod: true },
+  { methodName: "iDEAL", twinfieldAccount: "", isStripeMethod: true },
+  { methodName: "SEPA Direct Debit", twinfieldAccount: "", isStripeMethod: true },
+  { methodName: "Card reader", twinfieldAccount: "", isStripeMethod: true },
+  { methodName: "Class Pass", twinfieldAccount: "", isStripeMethod: false },
+  { methodName: "urban-sports-club", twinfieldAccount: "", isStripeMethod: false },
+  { methodName: "Gift card", twinfieldAccount: "", isStripeMethod: false },
+  { methodName: "Cash", twinfieldAccount: "", isStripeMethod: false },
+];
+
 export default function SettingsPage() {
   const [, navigate] = useLocation();
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [editedCategories, setEditedCategories] = useState<CategoryConfig[]>([]);
+  const [editedPaymentMethods, setEditedPaymentMethods] = useState<PaymentMethodConfig[]>([]);
   const [hasChanges, setHasChanges] = useState(false);
+  const [hasPaymentChanges, setHasPaymentChanges] = useState(false);
 
   const { data: categories, isLoading } = useQuery<CategoryConfig[]>({
     queryKey: ["/api/settings/categories"],
+  });
+
+  const { data: paymentMethods, isLoading: isLoadingPayments } = useQuery<PaymentMethodConfig[]>({
+    queryKey: ["/api/settings/payment-methods"],
   });
 
   useEffect(() => {
@@ -41,6 +66,14 @@ export default function SettingsPage() {
       setEditedCategories(categories);
     }
   }, [categories]);
+
+  useEffect(() => {
+    if (paymentMethods && paymentMethods.length > 0) {
+      setEditedPaymentMethods(paymentMethods);
+    } else {
+      setEditedPaymentMethods(DEFAULT_PAYMENT_METHODS);
+    }
+  }, [paymentMethods]);
 
   const saveMutation = useMutation({
     mutationFn: async (cats: CategoryConfig[]) => {
@@ -76,6 +109,41 @@ export default function SettingsPage() {
       });
     },
   });
+
+  const savePaymentMethodsMutation = useMutation({
+    mutationFn: async (methods: PaymentMethodConfig[]) => {
+      return apiRequest("POST", "/api/settings/payment-methods/batch", { methods });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/settings/payment-methods"] });
+      setHasPaymentChanges(false);
+      toast({
+        title: "Betaalmethoden opgeslagen",
+        description: "De Twinfield codes voor betaalmethoden zijn bijgewerkt.",
+      });
+    },
+    onError: () => {
+      toast({
+        title: "Fout",
+        description: "Er is iets misgegaan bij het opslaan van betaalmethoden.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handlePaymentMethodTwinfieldChange = (index: number, value: string) => {
+    const updated = [...editedPaymentMethods];
+    updated[index] = { ...updated[index], twinfieldAccount: value };
+    setEditedPaymentMethods(updated);
+    setHasPaymentChanges(true);
+  };
+
+  const handlePaymentMethodStripeChange = (index: number, checked: boolean) => {
+    const updated = [...editedPaymentMethods];
+    updated[index] = { ...updated[index], isStripeMethod: checked };
+    setEditedPaymentMethods(updated);
+    setHasPaymentChanges(true);
+  };
 
   const handleTwinfieldChange = (index: number, value: string) => {
     const updated = [...editedCategories];
@@ -196,6 +264,75 @@ export default function SettingsPage() {
               met 9% BTW en Twinfield code 8999.
             </CardDescription>
           </CardHeader>
+        </Card>
+
+        <Card className="mt-6">
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <CreditCard className="w-5 h-5 text-muted-foreground" />
+                <CardTitle>Betaalmethoden</CardTitle>
+              </div>
+              <Button
+                onClick={() => savePaymentMethodsMutation.mutate(editedPaymentMethods)}
+                disabled={!hasPaymentChanges || savePaymentMethodsMutation.isPending}
+                size="sm"
+                className="gap-2"
+                data-testid="btn-save-payments"
+              >
+                <Save className="w-4 h-4" />
+                Opslaan
+              </Button>
+            </div>
+            <CardDescription>
+              Twinfield grootboekrekeningen voor betaalmethoden (voor XML export).
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="min-w-[180px]">Betaalmethode</TableHead>
+                    <TableHead className="w-24">Twinfield</TableHead>
+                    <TableHead className="w-32">Via Stripe</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {editedPaymentMethods.map((method, index) => (
+                    <TableRow key={method.methodName} data-testid={`row-payment-${method.methodName}`}>
+                      <TableCell className="font-medium">
+                        <div className="flex items-center gap-2">
+                          {method.methodName}
+                          {method.isStripeMethod && (
+                            <Badge variant="outline" className="text-xs bg-blue-50 text-blue-700 border-blue-200">
+                              Stripe
+                            </Badge>
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <Input
+                          value={method.twinfieldAccount}
+                          onChange={(e) => handlePaymentMethodTwinfieldChange(index, e.target.value)}
+                          className="w-20 font-mono text-sm"
+                          placeholder="----"
+                          data-testid={`input-payment-twinfield-${method.methodName}`}
+                        />
+                      </TableCell>
+                      <TableCell>
+                        <Checkbox
+                          checked={method.isStripeMethod}
+                          onCheckedChange={(checked) => handlePaymentMethodStripeChange(index, checked === true)}
+                          data-testid={`checkbox-stripe-${method.methodName}`}
+                        />
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          </CardContent>
         </Card>
       </main>
     </div>

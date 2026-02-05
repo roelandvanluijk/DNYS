@@ -14,9 +14,10 @@ import type {
   AccrualEntry,
   InsertAccrualEntry
 } from "@shared/schema";
-import { productSettings, pendingReconciliations, accrualSchedule } from "@shared/schema";
+import { productSettings, pendingReconciliations, accrualSchedule, categorySettings as categorySettingsTable, paymentMethodSettings } from "@shared/schema";
 import { db } from "./db";
 import { eq } from "drizzle-orm";
+import type { InsertCategorySettings, CategorySettingsDB, InsertPaymentMethodSettings, PaymentMethodSettingsDB } from "@shared/schema";
 
 export interface CategorySettings {
   name: string;
@@ -39,6 +40,7 @@ export interface NewProductSuggestion {
 export interface IStorage {
   createSession(session: Omit<ReconciliationSession, "id" | "createdAt">): Promise<ReconciliationSession>;
   getSession(id: string): Promise<ReconciliationSession | undefined>;
+  updateSession(id: string, updates: Partial<ReconciliationSession>): Promise<ReconciliationSession | undefined>;
   getAllSessions(): Promise<ReconciliationSession[]>;
   addComparisons(sessionId: string, comparisons: Omit<CustomerComparison, "id">[]): Promise<void>;
   getComparisons(sessionId: string): Promise<CustomerComparison[]>;
@@ -68,6 +70,9 @@ export interface IStorage {
   
   addAccrualEntries(sessionId: string, entries: InsertAccrualEntry[]): Promise<void>;
   getAccrualEntries(sessionId: string): Promise<AccrualEntry[]>;
+  
+  getAllPaymentMethodSettings(): Promise<PaymentMethodSettingsDB[]>;
+  savePaymentMethodSettings(methodName: string, twinfieldAccount: string, isStripeMethod: boolean): Promise<void>;
 }
 
 export class MemStorage implements IStorage {
@@ -106,6 +111,15 @@ export class MemStorage implements IStorage {
 
   async getSession(id: string): Promise<ReconciliationSession | undefined> {
     return this.sessions.get(id);
+  }
+
+  async updateSession(id: string, updates: Partial<ReconciliationSession>): Promise<ReconciliationSession | undefined> {
+    const session = this.sessions.get(id);
+    if (!session) return undefined;
+    
+    const updatedSession = { ...session, ...updates };
+    this.sessions.set(id, updatedSession);
+    return updatedSession;
   }
 
   async getAllSessions(): Promise<ReconciliationSession[]> {
@@ -186,15 +200,56 @@ export class MemStorage implements IStorage {
   }
 
   async getCategorySettings(): Promise<CategorySettings[] | null> {
-    return this.customCategorySettings;
+    const dbSettings = await db.select().from(categorySettingsTable);
+    if (dbSettings.length === 0) {
+      return null;
+    }
+    return dbSettings.map(s => ({
+      name: s.name,
+      keywords: JSON.parse(s.keywords),
+      btwRate: s.btwRate,
+      twinfieldAccount: s.twinfieldAccount,
+      group: (s.name.includes('Omzet') || s.name.includes('Drank') || s.name.includes('Keuken')) ? 'horeca' as const : 'yoga' as const,
+    }));
   }
 
   async saveCategorySettings(settings: CategorySettings[]): Promise<void> {
+    // Delete all existing settings and insert new ones
+    await db.delete(categorySettingsTable);
+    for (const setting of settings) {
+      await db.insert(categorySettingsTable).values({
+        name: setting.name,
+        twinfieldAccount: setting.twinfieldAccount,
+        btwRate: setting.btwRate,
+        keywords: JSON.stringify(setting.keywords),
+      });
+    }
+    // Also update in-memory cache for backward compatibility
     this.customCategorySettings = settings;
   }
 
   async resetCategorySettings(): Promise<void> {
+    await db.delete(categorySettingsTable);
     this.customCategorySettings = null;
+  }
+  
+  async getAllPaymentMethodSettings(): Promise<PaymentMethodSettingsDB[]> {
+    return await db.select().from(paymentMethodSettings);
+  }
+  
+  async savePaymentMethodSettings(methodName: string, twinfieldAccount: string, isStripeMethod: boolean): Promise<void> {
+    const existing = await db.select().from(paymentMethodSettings).where(eq(paymentMethodSettings.methodName, methodName));
+    if (existing.length > 0) {
+      await db.update(paymentMethodSettings)
+        .set({ twinfieldAccount, isStripeMethod, updatedAt: new Date() })
+        .where(eq(paymentMethodSettings.methodName, methodName));
+    } else {
+      await db.insert(paymentMethodSettings).values({
+        methodName,
+        twinfieldAccount,
+        isStripeMethod,
+      });
+    }
   }
 
   async getProductByName(itemName: string): Promise<ProductSettings | undefined> {
