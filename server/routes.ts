@@ -204,6 +204,24 @@ async function categorizeItem(
   return categorizeItemByKeywords(itemName, customCategories);
 }
 
+// Cached version that uses pre-loaded product map (for performance)
+function categorizeItemCached(
+  itemName: string | undefined,
+  customCategories: CustomCategoryConfig[] | null,
+  productCache: Map<string, ProductSettings>
+): CategoryResult {
+  if (!itemName) {
+    return { category: "Overig", btwRate: 0.09, twinfieldAccount: "8999" };
+  }
+  
+  const storedProduct = productCache.get(itemName);
+  if (storedProduct && storedProduct.isReviewed) {
+    return categorizeItemFromProduct(storedProduct);
+  }
+  
+  return categorizeItemByKeywords(itemName, customCategories);
+}
+
 async function checkForNewProducts(
   momenceData: MomenceRow[],
   customCategories: CustomCategoryConfig[] | null
@@ -251,6 +269,14 @@ async function processReconciliation(
   customCategories: CustomCategoryConfig[] | null
 ): Promise<{ sessionId: string }> {
   
+  // PERFORMANCE FIX: Load all products once at the start instead of querying per row
+  const allProducts = await storage.getAllProducts();
+  const productCache = new Map<string, ProductSettings>();
+  for (const product of allProducts) {
+    productCache.set(product.itemName, product);
+  }
+  console.log(`[Performance] Loaded ${productCache.size} products into cache`);
+  
   const momenceByEmail = new Map<string, number>();
   const momenceItemsByEmail = new Map<string, Set<string>>();
   const momenceDatesByEmail = new Map<string, Set<string>>();
@@ -289,7 +315,8 @@ async function processReconciliation(
     momenceTotalAll += saleValue;
 
     // FIX 3: Categorize ALL transactions, not just Stripe payments
-    const { category, btwRate, twinfieldAccount } = await categorizeItem(item, customCategories);
+    // PERFORMANCE FIX: Use cached product lookup instead of database query per row
+    const { category, btwRate, twinfieldAccount } = categorizeItemCached(item, customCategories, productCache);
     const catData = categoryTotals.get(category) || { 
       count: 0, 
       total: 0, 
@@ -315,8 +342,9 @@ async function processReconciliation(
     itemsMap.set(itemName, itemData);
 
     // FIX 4: Generate accrual/spread entries for products with special handling
+    // PERFORMANCE FIX: Use cached product lookup instead of database query per row
     if (item) {
-      const product = await storage.getProductByName(item);
+      const product = productCache.get(item);
       if (product && (product.hasAccrual || product.hasSpread)) {
         const spreadType = product.hasAccrual ? 'accrual' : 'spread_12';
         
