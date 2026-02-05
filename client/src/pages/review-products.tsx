@@ -134,6 +134,7 @@ export default function ReviewProductsPage() {
 
   const handleSubmit = async () => {
     setIsLoading(true);
+    console.log("Starting handleSubmit, tempSessionId:", tempSessionId);
 
     try {
       const productData = products.map(p => ({
@@ -153,14 +154,18 @@ export default function ReviewProductsPage() {
         transactionCount: p.transactionCount,
       }));
 
-      await apiRequest("POST", "/api/products/batch", productData);
+      console.log("Saving products batch:", productData.length, "products");
+      const batchResponse = await apiRequest("POST", "/api/products/batch", productData);
+      console.log("Batch save response:", batchResponse);
 
       toast({
         title: "Producten opgeslagen",
         description: "Nu wordt de reconciliatie voortgezet...",
       });
 
+      console.log("Calling continue endpoint with tempSessionId:", tempSessionId);
       const continueResponse = await apiRequest("POST", `/api/reconcile/continue/${tempSessionId}`) as unknown as ContinueResponse;
+      console.log("Continue response:", continueResponse);
       
       sessionStorage.removeItem("newProductsData");
       
@@ -171,12 +176,24 @@ export default function ReviewProductsPage() {
         });
         navigate(`/results/${continueResponse.sessionId}`);
       } else {
-        throw new Error(continueResponse.error || "Kon reconciliatie niet voltooien");
+        const errorMsg = continueResponse.error || "Kon reconciliatie niet voltooien";
+        console.error("Continue failed:", errorMsg);
+        throw new Error(errorMsg);
       }
     } catch (error) {
+      console.error("handleSubmit error:", error);
+      let errorMessage = "Er is een fout opgetreden";
+      
+      if (error instanceof Error) {
+        errorMessage = error.message;
+        if (error.message.includes("niet gevonden") || error.message.includes("404")) {
+          errorMessage = "De sessie is verlopen. Upload de bestanden opnieuw.";
+        }
+      }
+      
       toast({
         title: "Fout bij opslaan",
-        description: error instanceof Error ? error.message : "Er is een fout opgetreden",
+        description: errorMessage,
         variant: "destructive",
       });
     } finally {
