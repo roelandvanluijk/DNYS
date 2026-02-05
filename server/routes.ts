@@ -897,6 +897,9 @@ export async function registerRoutes(
       const allSessions = await storage.getAllSessions();
       const otherSessions = allSessions.filter(s => s.id !== sessionId);
       
+      console.log(`Cross-month check: Found ${otherSessions.length} other sessions to compare`);
+      console.log(`Other sessions: ${otherSessions.map(s => s.period).join(', ')}`);
+      
       if (otherSessions.length === 0) {
         return res.json({ 
           matches: [], 
@@ -909,6 +912,8 @@ export async function registerRoutes(
       const currentDifferences = currentComparisons.filter(c => 
         c.matchStatus !== 'match' && Math.abs(c.difference ?? 0) >= 1
       );
+      
+      console.log(`Cross-month check: Current session has ${currentComparisons.length} comparisons, ${currentDifferences.length} differences`);
       
       if (currentDifferences.length === 0) {
         return res.json({ 
