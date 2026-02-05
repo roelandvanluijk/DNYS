@@ -348,13 +348,19 @@ export async function registerRoutes(
       if (!skipReview) {
         const newProducts = await checkForNewProducts(momenceResult.data, customCategories);
         if (newProducts.length > 0) {
-          const tempSessionId = `temp_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-          tempSessions.set(tempSessionId, {
-            momenceData: momenceResult.data,
-            stripeData: stripeResult.data,
+          const tempSessionId = `pending_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+          
+          // Store in database instead of memory so it persists
+          await storage.savePendingReconciliation({
+            id: tempSessionId,
             period,
-            customCategories,
+            momenceData: JSON.stringify(momenceResult.data),
+            stripeData: JSON.stringify(stripeResult.data),
+            newProductCount: newProducts.length,
+            status: "pending",
           });
+          
+          console.log("Saved pending reconciliation to database:", tempSessionId);
           
           return res.json({
             success: true,
@@ -1139,18 +1145,28 @@ export async function registerRoutes(
       const { tempSessionId } = req.params;
       console.log("TempSessionId:", tempSessionId);
       
-      const tempSession = tempSessions.get(tempSessionId);
+      // Fetch from database instead of memory
+      const pendingSession = await storage.getPendingReconciliation(tempSessionId);
       
-      if (!tempSession) {
-        console.error("Temp session not found:", tempSessionId);
-        return res.status(404).json({ error: "Tijdelijke sessie niet gevonden of verlopen" });
+      if (!pendingSession) {
+        console.error("Pending session not found in database:", tempSessionId);
+        return res.status(404).json({ 
+          success: false,
+          error: "Tijdelijke sessie niet gevonden of verlopen. Upload de bestanden opnieuw." 
+        });
       }
       
-      console.log("Temp session found, momence rows:", tempSession.momenceData.length, "stripe rows:", tempSession.stripeData.length);
+      const momenceData: MomenceRow[] = JSON.parse(pendingSession.momenceData);
+      const stripeData: StripeRow[] = JSON.parse(pendingSession.stripeData);
+      const period = pendingSession.period;
       
-      tempSessions.delete(tempSessionId);
+      console.log("Pending session found in database, momence rows:", momenceData.length, "stripe rows:", stripeData.length);
       
-      const { momenceData, stripeData, period, customCategories } = tempSession;
+      // Delete the pending session now that we're processing it
+      await storage.deletePendingReconciliation(tempSessionId);
+      
+      // Fetch custom category settings
+      const customCategories = await storage.getCategorySettings();
 
       const momenceByEmail = new Map<string, number>();
       const momenceItemsByEmail = new Map<string, Set<string>>();
@@ -1412,6 +1428,119 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Clear all products error:", error);
       res.status(500).json({ error: "Kon producten niet verwijderen" });
+    }
+  });
+
+  // Get all pending reconciliations
+  app.get("/api/pending-reconciliations", async (req, res) => {
+    try {
+      const pending = await storage.getAllPendingReconciliations();
+      res.json(pending.map(p => ({
+        id: p.id,
+        period: p.period,
+        newProductCount: p.newProductCount,
+        createdAt: p.createdAt,
+        status: p.status,
+      })));
+    } catch (error) {
+      console.error("Get pending reconciliations error:", error);
+      res.status(500).json({ error: "Kon openstaande reconciliaties niet laden" });
+    }
+  });
+
+  // Delete a pending reconciliation
+  app.delete("/api/pending-reconciliations/:id", async (req, res) => {
+    try {
+      await storage.deletePendingReconciliation(req.params.id);
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Delete pending reconciliation error:", error);
+      res.status(500).json({ error: "Kon reconciliatie niet verwijderen" });
+    }
+  });
+
+  // Clear all pending reconciliations
+  app.delete("/api/pending-reconciliations/all", async (req, res) => {
+    try {
+      await storage.clearAllPendingReconciliations();
+      res.json({ success: true, message: "Alle openstaande reconciliaties zijn verwijderd" });
+    } catch (error) {
+      console.error("Clear pending reconciliations error:", error);
+      res.status(500).json({ error: "Kon reconciliaties niet verwijderen" });
+    }
+  });
+
+  // Save products only (without continuing reconciliation)
+  app.post("/api/products/save-only", async (req, res) => {
+    try {
+      console.log("=== SAVE PRODUCTS ONLY ===");
+      const products = req.body.products;
+      const tempSessionId = req.body.tempSessionId;
+      
+      if (!Array.isArray(products)) {
+        return res.status(400).json({ error: "Verwacht array van producten" });
+      }
+      
+      const saved = [];
+      for (const productData of products) {
+        if (!productData.itemName || !productData.category) continue;
+        
+        const existingProduct = await storage.getProductByName(productData.itemName);
+        if (existingProduct) {
+          const updated = await storage.updateProduct(existingProduct.id, {
+            category: productData.category,
+            btwRate: productData.btwRate,
+            twinfieldAccount: productData.twinfieldAccount,
+            hasAccrual: productData.hasAccrual || false,
+            accrualMonths: productData.accrualMonths,
+            accrualStartOffset: productData.accrualStartOffset || 0,
+            accrualStartDate: productData.accrualStartDate || null,
+            accrualEndDate: productData.accrualEndDate || null,
+            hasSpread: productData.hasSpread || false,
+            spreadMonths: productData.spreadMonths || 12,
+            spreadStartDate: productData.spreadStartDate || null,
+            spreadEndDate: productData.spreadEndDate || null,
+            isReviewed: true,
+            needsReview: false,
+            lastSeenDate: new Date().toISOString().split('T')[0],
+            transactionCount: (existingProduct.transactionCount || 0) + (productData.transactionCount || 0),
+          });
+          if (updated) saved.push(updated);
+        } else {
+          const product = await storage.saveProduct({
+            itemName: productData.itemName,
+            category: productData.category,
+            btwRate: productData.btwRate || 0.09,
+            twinfieldAccount: productData.twinfieldAccount || "8999",
+            hasAccrual: productData.hasAccrual || false,
+            accrualMonths: productData.accrualMonths,
+            accrualStartOffset: productData.accrualStartOffset || 0,
+            accrualStartDate: productData.accrualStartDate || null,
+            accrualEndDate: productData.accrualEndDate || null,
+            hasSpread: productData.hasSpread || false,
+            spreadMonths: productData.spreadMonths || 12,
+            spreadStartDate: productData.spreadStartDate || null,
+            spreadEndDate: productData.spreadEndDate || null,
+            isReviewed: true,
+            needsReview: false,
+            firstSeenDate: new Date().toISOString().split('T')[0],
+            lastSeenDate: new Date().toISOString().split('T')[0],
+            transactionCount: productData.transactionCount || 0,
+          });
+          saved.push(product);
+        }
+      }
+      
+      console.log("Products saved:", saved.length, "tempSessionId kept:", tempSessionId);
+      res.json({ 
+        success: true, 
+        count: saved.length, 
+        message: `${saved.length} producten opgeslagen. Je kunt de reconciliatie later voortzetten.`,
+        tempSessionId 
+      });
+    } catch (error) {
+      console.error("Save products only error:", error);
+      res.status(500).json({ error: "Kon producten niet opslaan" });
     }
   });
 

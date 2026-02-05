@@ -8,9 +8,11 @@ import type {
   CategoryWithDetails,
   ReconciliationResult,
   ProductSettings,
-  InsertProductSettings
+  InsertProductSettings,
+  PendingReconciliation,
+  InsertPendingReconciliation
 } from "@shared/schema";
-import { productSettings } from "@shared/schema";
+import { productSettings, pendingReconciliations } from "@shared/schema";
 import { db } from "./db";
 import { eq } from "drizzle-orm";
 
@@ -55,6 +57,12 @@ export interface IStorage {
   updateProduct(id: number, updates: Partial<InsertProductSettings>): Promise<ProductSettings | undefined>;
   deleteProduct(id: number): Promise<void>;
   clearAllProducts(): Promise<void>;
+  
+  savePendingReconciliation(data: InsertPendingReconciliation): Promise<PendingReconciliation>;
+  getPendingReconciliation(id: string): Promise<PendingReconciliation | undefined>;
+  getAllPendingReconciliations(): Promise<PendingReconciliation[]>;
+  deletePendingReconciliation(id: string): Promise<void>;
+  clearAllPendingReconciliations(): Promise<void>;
 }
 
 export class MemStorage implements IStorage {
@@ -213,6 +221,28 @@ export class MemStorage implements IStorage {
 
   async clearAllProducts(): Promise<void> {
     await db.delete(productSettings);
+  }
+
+  async savePendingReconciliation(data: InsertPendingReconciliation): Promise<PendingReconciliation> {
+    const [pending] = await db.insert(pendingReconciliations).values(data).returning();
+    return pending;
+  }
+
+  async getPendingReconciliation(id: string): Promise<PendingReconciliation | undefined> {
+    const [pending] = await db.select().from(pendingReconciliations).where(eq(pendingReconciliations.id, id));
+    return pending || undefined;
+  }
+
+  async getAllPendingReconciliations(): Promise<PendingReconciliation[]> {
+    return await db.select().from(pendingReconciliations).orderBy(pendingReconciliations.createdAt);
+  }
+
+  async deletePendingReconciliation(id: string): Promise<void> {
+    await db.delete(pendingReconciliations).where(eq(pendingReconciliations.id, id));
+  }
+
+  async clearAllPendingReconciliations(): Promise<void> {
+    await db.delete(pendingReconciliations);
   }
 }
 

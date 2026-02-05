@@ -40,6 +40,24 @@ export const insertProductSettingsSchema = createInsertSchema(productSettings).o
 export type InsertProductSettings = z.infer<typeof insertProductSettingsSchema>;
 export type ProductSettings = typeof productSettings.$inferSelect;
 
+export const pendingReconciliations = pgTable("pending_reconciliations", {
+  id: varchar("id").primaryKey(),
+  period: text("period").notNull(),
+  momenceData: text("momence_data").notNull(),
+  stripeData: text("stripe_data").notNull(),
+  newProductCount: integer("new_product_count").default(0),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  expiresAt: timestamp("expires_at"),
+  status: text("status").default("pending"),
+});
+
+export const insertPendingReconciliationSchema = createInsertSchema(pendingReconciliations).omit({
+  createdAt: true,
+});
+
+export type InsertPendingReconciliation = z.infer<typeof insertPendingReconciliationSchema>;
+export type PendingReconciliation = typeof pendingReconciliations.$inferSelect;
+
 export const reconciliationSessions = pgTable("reconciliation_sessions", {
   id: varchar("id").primaryKey(),
   period: text("period").notNull(),

@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
-import { AlertTriangle, Check, Loader2, Package, ArrowLeft } from "lucide-react";
+import { AlertTriangle, Check, Loader2, Package, ArrowLeft, Save } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import dnysLogo from "@/assets/dnys-logo.svg";
 
@@ -66,6 +66,7 @@ export default function ReviewProductsPage() {
   const [, navigate] = useLocation();
   const { toast } = useToast();
   const [isLoading, setIsLoading] = useState(false);
+  const [isSavingOnly, setIsSavingOnly] = useState(false);
   const [tempSessionId, setTempSessionId] = useState<string>("");
   const [period, setPeriod] = useState<string>("");
   const [products, setProducts] = useState<ProductEdit[]>([]);
@@ -198,6 +199,58 @@ export default function ReviewProductsPage() {
       });
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleSaveOnly = async () => {
+    setIsSavingOnly(true);
+    console.log("Saving products only, tempSessionId:", tempSessionId);
+
+    try {
+      const productData = products.map(p => ({
+        itemName: p.itemName,
+        category: p.category,
+        btwRate: p.btwRate,
+        twinfieldAccount: p.twinfieldAccount,
+        hasAccrual: p.hasAccrual,
+        accrualMonths: p.hasAccrual ? p.accrualMonths : null,
+        accrualStartOffset: 0,
+        accrualStartDate: p.hasAccrual && p.accrualStartDate ? p.accrualStartDate : null,
+        accrualEndDate: p.hasAccrual && p.accrualEndDate ? p.accrualEndDate : null,
+        hasSpread: p.hasSpread,
+        spreadMonths: p.hasSpread ? p.spreadMonths : 12,
+        spreadStartDate: p.hasSpread && p.spreadStartDate ? p.spreadStartDate : null,
+        spreadEndDate: p.hasSpread && p.spreadEndDate ? p.spreadEndDate : null,
+        transactionCount: p.transactionCount,
+      }));
+
+      console.log("Saving products:", productData.length);
+      const response = await apiRequest("POST", "/api/products/save-only", {
+        products: productData,
+        tempSessionId,
+      }) as unknown as { success: boolean; message?: string; error?: string };
+      
+      console.log("Save only response:", response);
+      
+      if (response.success) {
+        sessionStorage.removeItem("newProductsData");
+        toast({
+          title: "Producten opgeslagen",
+          description: response.message || "De producten zijn opgeslagen. Je kunt de reconciliatie later voortzetten.",
+        });
+        navigate("/");
+      } else {
+        throw new Error(response.error || "Kon producten niet opslaan");
+      }
+    } catch (error) {
+      console.error("handleSaveOnly error:", error);
+      toast({
+        title: "Fout bij opslaan",
+        description: error instanceof Error ? error.message : "Er is een fout opgetreden",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSavingOnly(false);
     }
   };
 
@@ -412,26 +465,44 @@ export default function ReviewProductsPage() {
             <Button
               variant="outline"
               onClick={() => navigate("/")}
-              disabled={isLoading}
+              disabled={isLoading || isSavingOnly}
               data-testid="button-cancel"
             >
               Annuleren
             </Button>
             <Button
-              onClick={handleSubmit}
-              disabled={isLoading}
-              size="lg"
-              data-testid="button-save"
+              variant="secondary"
+              onClick={handleSaveOnly}
+              disabled={isLoading || isSavingOnly}
+              data-testid="button-save-only"
             >
-              {isLoading ? (
+              {isSavingOnly ? (
                 <>
                   <Loader2 className="w-4 h-4 mr-2 animate-spin" />
                   Opslaan...
                 </>
               ) : (
                 <>
+                  <Save className="w-4 h-4 mr-2" />
+                  Alleen Opslaan
+                </>
+              )}
+            </Button>
+            <Button
+              onClick={handleSubmit}
+              disabled={isLoading || isSavingOnly}
+              size="lg"
+              data-testid="button-save"
+            >
+              {isLoading ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Verwerken...
+                </>
+              ) : (
+                <>
                   <Check className="w-4 h-4 mr-2" />
-                  Alles Opslaan & Doorgaan
+                  Opslaan & Doorgaan
                 </>
               )}
             </Button>
