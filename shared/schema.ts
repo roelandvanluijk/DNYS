@@ -264,7 +264,7 @@ export const REVENUE_CATEGORIES: Record<string, CategoryConfigWithSpecial> = {
   },
   'Opleidingen': {
     keywords: [
-      'opleiding', 'teacher training', '200 uur', 'ademcoach',
+      'opleiding', '200 uur', 'ademcoach',
       'yogatherapie', 'meditatie tot zelfrealisatie', 'schoolverlichting',
       'facilitator', 'certification', '300 uur', 'yin yoga training',
       'pilates teacher training',
@@ -276,13 +276,20 @@ export const REVENUE_CATEGORIES: Record<string, CategoryConfigWithSpecial> = {
     specialHandling: 'accrual',
     priority: 2,
   },
+  'Teacher Training': {
+    keywords: ['teacher training'],
+    btwRate: 0.21,
+    twinfieldAccount: '4050',
+    group: 'yoga',
+    priority: 3,
+  },
   'Jaarabonnementen': {
     keywords: ['year membership', 'yearly membership', 'jaar abonnement', 'jaarlidmaatschap'],
     btwRate: 0.09,
     twinfieldAccount: '8101',
     group: 'yoga',
     specialHandling: 'spread_12',
-    priority: 3,
+    priority: 4,
   },
   'Gift Cards': {
     keywords: ['gift card', 'cadeaukaart', 'voucher'],

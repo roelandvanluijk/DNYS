@@ -105,6 +105,7 @@ function categorizeItemByKeywords(
   const categoryOrder = [
     'Online/Livestream',
     'Opleidingen',
+    'Teacher Training',
     'Jaarabonnementen',
     'Gift Cards',
     'Money Credits',
