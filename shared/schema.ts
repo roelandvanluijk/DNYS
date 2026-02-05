@@ -58,6 +58,29 @@ export const insertPendingReconciliationSchema = createInsertSchema(pendingRecon
 export type InsertPendingReconciliation = z.infer<typeof insertPendingReconciliationSchema>;
 export type PendingReconciliation = typeof pendingReconciliations.$inferSelect;
 
+export const accrualSchedule = pgTable("accrual_schedule", {
+  id: serial("id").primaryKey(),
+  sessionId: varchar("session_id").notNull(),
+  productName: text("product_name").notNull(),
+  customerEmail: text("customer_email"),
+  saleDate: text("sale_date"),
+  totalAmount: real("total_amount").notNull(),
+  spreadMonths: integer("spread_months").notNull(),
+  bookingMonth: text("booking_month").notNull(),
+  bookingAmount: real("booking_amount").notNull(),
+  category: text("category").notNull(),
+  btwRate: real("btw_rate").notNull(),
+  twinfieldAccount: text("twinfield_account"),
+  spreadType: text("spread_type"),
+});
+
+export const insertAccrualScheduleSchema = createInsertSchema(accrualSchedule).omit({
+  id: true,
+});
+
+export type InsertAccrualEntry = z.infer<typeof insertAccrualScheduleSchema>;
+export type AccrualEntry = typeof accrualSchedule.$inferSelect;
+
 export const reconciliationSessions = pgTable("reconciliation_sessions", {
   id: varchar("id").primaryKey(),
   period: text("period").notNull(),
@@ -205,7 +228,8 @@ export const REVENUE_CATEGORIES: Record<string, CategoryConfigWithSpecial> = {
       'opleiding', 'teacher training', '200 uur', 'ademcoach',
       'yogatherapie', 'meditatie tot zelfrealisatie', 'schoolverlichting',
       'facilitator', 'certification', '300 uur', 'yin yoga training',
-      'pilates teacher training'
+      'pilates teacher training',
+      'kidsyoga', 'mentorship', '50 uur'
     ],
     btwRate: 0.21,
     twinfieldAccount: '8300',
@@ -302,7 +326,8 @@ export const REVENUE_CATEGORIES: Record<string, CategoryConfigWithSpecial> = {
       'single class', 'yoga', 'pilates', 'flow', 'yin', 'vinyasa',
       'ashtanga', 'hatha', 'restorative', 'breathwork', 'meditation',
       'sound', 'losse les', 'drop in', 'drop-in', '€15', '€16', '€17', '€18',
-      'class', 'les'
+      'class', 'les',
+      'taichi', 'tai chi'
     ],
     btwRate: 0.09,
     twinfieldAccount: '8120',

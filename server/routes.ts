@@ -4,7 +4,7 @@ import multer from "multer";
 import Papa from "papaparse";
 import ExcelJS from "exceljs";
 import { storage, type NewProductSuggestion } from "./storage";
-import { STRIPE_PAYMENT_METHODS, REVENUE_CATEGORIES, type MatchStatus, type CategoryConfig, type ProductSettings } from "@shared/schema";
+import { STRIPE_PAYMENT_METHODS, REVENUE_CATEGORIES, type MatchStatus, type CategoryConfig, type ProductSettings, type InsertAccrualEntry } from "@shared/schema";
 
 // Emails to exclude from customer comparisons (studio's own email)
 const EXCLUDED_EMAILS = ["info@denieuweyogaschool.nl"];
@@ -117,8 +117,8 @@ function categorizeItemByKeywords(
     'Single Classes',
   ];
   
-  // Check for gift card codes (alphanumeric 6-10 chars)
-  if (/^[A-Z0-9]{6,10}$/.test(itemName)) {
+  // Check for gift card codes (alphanumeric 6-10 chars) - FIX 5: case-insensitive
+  if (/^[A-Za-z0-9]{6,10}$/.test(itemName.trim())) {
     return { category: "Gift Cards", btwRate: 0.00, twinfieldAccount: "8900" };
   }
   
@@ -266,6 +266,9 @@ async function processReconciliation(
   const categoryItems = new Map<string, Map<string, { amount: number; count: number; dates: Set<string> }>>();
   let momenceTotalAll = 0;
   let nonStripeTotal = 0;
+  
+  // FIX 4: Track accrual/spread entries for products with special handling
+  const accrualEntries: InsertAccrualEntry[] = [];
 
   for (const row of momenceData) {
     const paymentMethod = row["Payment method"] || "";
@@ -310,6 +313,91 @@ async function processReconciliation(
     itemData.count++;
     if (transactionDate) itemData.dates.add(transactionDate);
     itemsMap.set(itemName, itemData);
+
+    // FIX 4: Generate accrual/spread entries for products with special handling
+    if (item) {
+      const product = await storage.getProductByName(item);
+      if (product && (product.hasAccrual || product.hasSpread)) {
+        const spreadType = product.hasAccrual ? 'accrual' : 'spread_12';
+        
+        // Use product settings for category/btw/twinfield to ensure consistency
+        const productCategory = product.category;
+        const productBtwRate = product.btwRate;
+        const productTwinfieldAccount = product.twinfieldAccount || twinfieldAccount;
+        
+        // Determine spread period using date-based or month-based calculation
+        let spreadMonths: number;
+        let startDate: Date;
+        
+        // Helper to check if date is valid
+        const isValidDate = (d: Date) => d instanceof Date && !isNaN(d.getTime());
+        
+        if (product.hasAccrual && product.accrualStartDate && product.accrualEndDate) {
+          // Date-based accrual: calculate months between start and end dates
+          const accrualStart = new Date(product.accrualStartDate);
+          const accrualEnd = new Date(product.accrualEndDate);
+          if (isValidDate(accrualStart) && isValidDate(accrualEnd) && accrualEnd > accrualStart) {
+            spreadMonths = Math.max(1, Math.ceil((accrualEnd.getTime() - accrualStart.getTime()) / (1000 * 60 * 60 * 24 * 30)));
+            startDate = accrualStart;
+          } else {
+            // Invalid dates, fall back to month-based
+            spreadMonths = product.accrualMonths || 6;
+            startDate = new Date(transactionDate || new Date());
+          }
+        } else if (product.hasSpread && product.spreadStartDate && product.spreadEndDate) {
+          // Date-based spread: calculate months between start and end dates
+          const spreadStart = new Date(product.spreadStartDate);
+          const spreadEnd = new Date(product.spreadEndDate);
+          if (isValidDate(spreadStart) && isValidDate(spreadEnd) && spreadEnd > spreadStart) {
+            spreadMonths = Math.max(1, Math.ceil((spreadEnd.getTime() - spreadStart.getTime()) / (1000 * 60 * 60 * 24 * 30)));
+            startDate = spreadStart;
+          } else {
+            // Invalid dates, fall back to month-based
+            spreadMonths = product.spreadMonths || 12;
+            startDate = new Date(transactionDate || new Date());
+          }
+        } else {
+          // Fallback to month-based calculation from sale date
+          spreadMonths = product.hasAccrual 
+            ? (product.accrualMonths || 6) 
+            : (product.spreadMonths || 12);
+          const startOffset = product.hasAccrual 
+            ? (product.accrualStartOffset || 0) 
+            : 0;
+          
+          try {
+            startDate = new Date(transactionDate);
+            if (isNaN(startDate.getTime())) startDate = new Date();
+            startDate.setMonth(startDate.getMonth() + startOffset);
+          } catch {
+            startDate = new Date();
+          }
+        }
+        
+        const monthlyAmount = saleValue / spreadMonths;
+        
+        for (let i = 0; i < spreadMonths; i++) {
+          const bookingDate = new Date(startDate);
+          bookingDate.setMonth(bookingDate.getMonth() + i);
+          const bookingMonth = `${bookingDate.getFullYear()}-${String(bookingDate.getMonth() + 1).padStart(2, '0')}`;
+          
+          accrualEntries.push({
+            sessionId: "",  // will be set after session creation
+            productName: item,
+            customerEmail: customerEmail || null,
+            saleDate: transactionDate || null,
+            totalAmount: saleValue,
+            spreadMonths: spreadMonths,
+            bookingMonth,
+            bookingAmount: Math.round(monthlyAmount * 100) / 100,
+            category: productCategory,
+            btwRate: productBtwRate,
+            twinfieldAccount: productTwinfieldAccount,
+            spreadType,
+          });
+        }
+      }
+    }
 
     // Stripe-specific: only aggregate by email for Stripe reconciliation matching
     if (isStripeMethod) {
@@ -495,6 +583,12 @@ async function processReconciliation(
     await storage.addCategoryItems(session.id, categoryName, items);
   }
 
+  // FIX 4: Save accrual entries with session ID
+  if (accrualEntries.length > 0) {
+    const entriesWithSession = accrualEntries.map(e => ({ ...e, sessionId: session.id }));
+    await storage.addAccrualEntries(session.id, entriesWithSession);
+  }
+
   return { sessionId: session.id };
 }
 
@@ -673,6 +767,16 @@ export async function registerRoutes(
       res.json(result);
     } catch (error) {
       res.status(500).json({ error: "Kon sessie niet laden" });
+    }
+  });
+
+  // FIX 4: API endpoint for accrual entries
+  app.get("/api/sessions/:sessionId/accruals", async (req, res) => {
+    try {
+      const entries = await storage.getAccrualEntries(req.params.sessionId);
+      res.json(entries);
+    } catch (error) {
+      res.status(500).json({ error: "Kon spreidingsgegevens niet laden" });
     }
   });
 
@@ -934,6 +1038,48 @@ export async function registerRoutes(
                   comp.matchStatus === "only_in_momence" ? "Alleen Momence" :
                   "Alleen Stripe",
         });
+      }
+
+      // FIX 4: Add Accrual Schema sheet for products with spreading/accrual
+      const accrualEntries = await storage.getAccrualEntries(req.params.sessionId);
+      if (accrualEntries.length > 0) {
+        const accrualSheet = workbook.addWorksheet("Accrual Schema");
+        
+        accrualSheet.getCell("A1").value = "Spreiding & Accrual Overzicht";
+        accrualSheet.getCell("A1").font = { bold: true, size: 14, color: { argb: 'FF8B7355' } };
+        accrualSheet.mergeCells("A1:H1");
+        accrualSheet.addRow([]);
+        
+        const accrualHeaders = [
+          "Product", "Klant", "Verkoopdatum", "Totaal", 
+          "Type", "Maanden", "Boekmaand", "Maandbedrag"
+        ];
+        const accrualHdrRow = accrualSheet.addRow(accrualHeaders);
+        accrualHdrRow.eachCell((cell) => { cell.style = headerStyle; });
+        
+        accrualSheet.columns = [
+          { width: 35 }, { width: 30 }, { width: 15 }, { width: 15 },
+          { width: 12 }, { width: 10 }, { width: 15 }, { width: 15 },
+        ];
+        
+        // Sort by product name, then booking month
+        const sortedAccruals = [...accrualEntries].sort((a, b) => {
+          if (a.productName !== b.productName) return a.productName.localeCompare(b.productName);
+          return a.bookingMonth.localeCompare(b.bookingMonth);
+        });
+        
+        for (const entry of sortedAccruals) {
+          accrualSheet.addRow([
+            entry.productName,
+            entry.customerEmail || "",
+            entry.saleDate || "",
+            formatEuro(entry.totalAmount),
+            entry.spreadType === 'accrual' ? 'Opleiding' : 'Jaarabonnement',
+            entry.spreadMonths,
+            entry.bookingMonth,
+            formatEuro(entry.bookingAmount),
+          ]);
+        }
       }
 
       res.setHeader(

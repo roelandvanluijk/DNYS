@@ -10,9 +10,11 @@ import type {
   ProductSettings,
   InsertProductSettings,
   PendingReconciliation,
-  InsertPendingReconciliation
+  InsertPendingReconciliation,
+  AccrualEntry,
+  InsertAccrualEntry
 } from "@shared/schema";
-import { productSettings, pendingReconciliations } from "@shared/schema";
+import { productSettings, pendingReconciliations, accrualSchedule } from "@shared/schema";
 import { db } from "./db";
 import { eq } from "drizzle-orm";
 
@@ -63,6 +65,9 @@ export interface IStorage {
   getAllPendingReconciliations(): Promise<PendingReconciliation[]>;
   deletePendingReconciliation(id: string): Promise<void>;
   clearAllPendingReconciliations(): Promise<void>;
+  
+  addAccrualEntries(sessionId: string, entries: InsertAccrualEntry[]): Promise<void>;
+  getAccrualEntries(sessionId: string): Promise<AccrualEntry[]>;
 }
 
 export class MemStorage implements IStorage {
@@ -243,6 +248,15 @@ export class MemStorage implements IStorage {
 
   async clearAllPendingReconciliations(): Promise<void> {
     await db.delete(pendingReconciliations);
+  }
+
+  async addAccrualEntries(sessionId: string, entries: InsertAccrualEntry[]): Promise<void> {
+    if (entries.length === 0) return;
+    await db.insert(accrualSchedule).values(entries);
+  }
+
+  async getAccrualEntries(sessionId: string): Promise<AccrualEntry[]> {
+    return await db.select().from(accrualSchedule).where(eq(accrualSchedule.sessionId, sessionId));
   }
 }
 

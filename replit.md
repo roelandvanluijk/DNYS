@@ -172,3 +172,17 @@ Old format: `Amount`, `Fee`, `Customer Email`, `Status`
 - Opleidingen category now displayed FIRST in results, followed by other categories
 - Category order in results: Opleidingen, Jaarabonnementen, Online/Livestream, then others
 - Date inputs in review-products and products pages for configuring accrual periods
+
+**February 2026: Code Refactoring & Accrual Implementation**
+- Removed dead code (tempSessions Map replaced by database-backed pending_reconciliations)
+- Extracted shared processReconciliation() function to eliminate code duplication
+- Revenue categorization now applies to ALL transactions, not just Stripe payments
+- Added accrual_schedule database table to track revenue spreading
+- Accrual/spread entries generated during reconciliation with date-based or month-based calculation
+- Added /api/sessions/:sessionId/accruals endpoint for accrual data
+- Excel export now includes "Accrual Schema" sheet showing monthly revenue distribution
+- Added missing category keywords: Tai Chi (Single Classes), kidsyoga/mentorship (Opleidingen)
+- Gift card code detection now case-insensitive
+- Persistent pending reconciliations survive server restarts
+- Two save options on review page: "Alleen Opslaan" vs "Opslaan & Doorgaan"
+- Clear all products feature for testing/reset
