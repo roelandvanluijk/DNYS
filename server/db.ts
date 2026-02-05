@@ -22,3 +22,14 @@ pool.on('error', (err) => {
 });
 
 export const db = drizzle(pool, { schema });
+
+// ONE-TIME CLEANUP: Clear all products from database
+// This will run once on startup, then this code should be removed
+(async () => {
+  try {
+    const result = await pool.query('DELETE FROM product_settings');
+    console.log(`[DB CLEANUP] Cleared ${result.rowCount} products from database`);
+  } catch (err) {
+    console.error('[DB CLEANUP] Error clearing products:', err);
+  }
+})();
