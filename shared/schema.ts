@@ -305,9 +305,9 @@ export const REVENUE_CATEGORIES: Record<string, CategoryConfigWithSpecial> = {
     group: 'yoga',
     priority: 5,
   },
-  'Workshops & Events': {
+  'Workshops 9%': {
     keywords: [
-      'workshop', 'ceremony', 'cacao', 'tantra', 'truffle',
+      'workshop', 'ceremony', 'cacao',
       'retreat', 'circle', 'event', 'face yoga', 'new year',
       'sound bath', 'gong', 'kirtan', 'sound healing'
     ],
@@ -315,6 +315,15 @@ export const REVENUE_CATEGORIES: Record<string, CategoryConfigWithSpecial> = {
     twinfieldAccount: '8150',
     group: 'yoga',
     priority: 6,
+  },
+  'Workshops 21%': {
+    keywords: [
+      'tantra', 'truffle'
+    ],
+    btwRate: 0.21,
+    twinfieldAccount: '8150',
+    group: 'yoga',
+    priority: 7,
   },
   'Abonnementen': {
     keywords: [

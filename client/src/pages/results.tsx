@@ -532,10 +532,10 @@ export default function ResultsPage() {
     );
   }
 
-  const yogaCatOrder = ['Opleidingen', 'Jaarabonnementen', 'Online/Livestream', 'Gift Cards', 'Money Credits', 'Workshops & Events', 'Abonnementen', 'Rittenkaarten', 'Single Classes', 'Overig'];
+  const yogaCatOrder = ['Opleidingen', 'Teacher Training', 'Jaarabonnementen', 'Online/Livestream', 'Gift Cards', 'Money Credits', 'Workshops 9%', 'Workshops 21%', 'Abonnementen', 'Rittenkaarten', 'Single Classes', 'Overig'];
   const yogaCategories = data?.categories
     .filter(c => {
-      const yogaCats = ['Opleidingen', 'Jaarabonnementen', 'Online/Livestream', 'Gift Cards', 'Money Credits', 'Gift Cards & Credits', 'Workshops & Events', 'Abonnementen', 'Rittenkaarten', 'Single Classes', 'Overig'];
+      const yogaCats = ['Opleidingen', 'Teacher Training', 'Jaarabonnementen', 'Online/Livestream', 'Gift Cards', 'Money Credits', 'Gift Cards & Credits', 'Workshops 9%', 'Workshops 21%', 'Abonnementen', 'Rittenkaarten', 'Single Classes', 'Overig'];
       return yogaCats.includes(c.category);
     })
     .sort((a, b) => {
