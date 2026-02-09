@@ -10,6 +10,7 @@ import { useToast } from "@/hooks/use-toast";
 import { AlertTriangle, Check, Loader2, Package, ArrowLeft, Save } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import dnysLogo from "@/assets/dnys-logo.svg";
+import { REVENUE_CATEGORIES } from "@shared/schema";
 
 interface NewProductSuggestion {
   itemName: string;
@@ -40,18 +41,11 @@ interface ContinueResponse {
 }
 
 const CATEGORIES = [
-  { name: "Online/Livestream", btwRate: 0.21, twinfield: "8200" },
-  { name: "Opleidingen", btwRate: 0.21, twinfield: "8300" },
-  { name: "Jaarabonnementen", btwRate: 0.09, twinfield: "8101" },
-  { name: "Gift Cards", btwRate: 0.00, twinfield: "8900" },
-  { name: "Money Credits", btwRate: 0.00, twinfield: "8901" },
-  { name: "Workshops & Events", btwRate: 0.09, twinfield: "8150" },
-  { name: "Abonnementen", btwRate: 0.09, twinfield: "8100" },
-  { name: "Rittenkaarten", btwRate: 0.09, twinfield: "8110" },
-  { name: "Omzet Keuken", btwRate: 0.09, twinfield: "8001" },
-  { name: "Omzet Drank Laag", btwRate: 0.09, twinfield: "8002" },
-  { name: "Omzet Drank Hoog", btwRate: 0.21, twinfield: "8003" },
-  { name: "Single Classes", btwRate: 0.09, twinfield: "8120" },
+  ...Object.entries(REVENUE_CATEGORIES).map(([name, config]) => ({
+    name,
+    btwRate: config.btwRate,
+    twinfield: config.twinfieldAccount,
+  })),
   { name: "Overig", btwRate: 0.09, twinfield: "8999" },
 ];
 
