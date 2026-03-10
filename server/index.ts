@@ -1,6 +1,7 @@
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
+import { setupAuth, requireAuth } from "./auth";
 import { createServer } from "http";
 
 const app = express();
@@ -21,6 +22,23 @@ app.use(
 );
 
 app.use(express.urlencoded({ extended: false }));
+
+// Trust proxy for Railway (runs behind a reverse proxy)
+if (process.env.NODE_ENV === "production") {
+  app.set("trust proxy", 1);
+}
+
+// Setup authentication (sessions + passport)
+setupAuth(app);
+
+// Protect all API routes except auth and health
+app.use("/api", (req, res, next) => {
+  // Allow auth endpoints and health check without login
+  if (req.path.startsWith("/auth/") || req.path === "/health") {
+    return next();
+  }
+  return requireAuth(req, res, next);
+});
 
 export function log(message: string, source = "express") {
   const formattedTime = new Date().toLocaleTimeString("en-US", {

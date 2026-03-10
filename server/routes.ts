@@ -629,7 +629,12 @@ export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
-  
+
+  // Health check for Railway deployment
+  app.get("/api/health", (_req, res) => {
+    res.json({ status: "ok", timestamp: new Date().toISOString() });
+  });
+
   app.post("/api/reconcile", upload.fields([
     { name: "momence", maxCount: 1 },
     { name: "stripe", maxCount: 1 }
