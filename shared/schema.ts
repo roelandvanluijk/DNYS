@@ -1,4 +1,4 @@
-import { pgTable, text, varchar, real, integer, timestamp, boolean, serial } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, real, integer, doublePrecision, timestamp, boolean, serial } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -64,10 +64,10 @@ export const accrualSchedule = pgTable("accrual_schedule", {
   productName: text("product_name").notNull(),
   customerEmail: text("customer_email"),
   saleDate: text("sale_date"),
-  totalAmount: real("total_amount").notNull(),
+  totalAmount: doublePrecision("total_amount").notNull(),
   spreadMonths: integer("spread_months").notNull(),
   bookingMonth: text("booking_month").notNull(),
-  bookingAmount: real("booking_amount").notNull(),
+  bookingAmount: doublePrecision("booking_amount").notNull(),
   category: text("category").notNull(),
   btwRate: real("btw_rate").notNull(),
   twinfieldAccount: text("twinfield_account"),
@@ -121,11 +121,11 @@ export const reconciliationSessions = pgTable("reconciliation_sessions", {
   id: varchar("id").primaryKey(),
   period: text("period").notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
-  momenceTotal: real("momence_total").default(0),
-  stripeTotal: real("stripe_total").default(0),
-  stripeFees: real("stripe_fees").default(0),
-  stripeNet: real("stripe_net").default(0),
-  nonStripeTotal: real("non_stripe_total").default(0),
+  momenceTotal: doublePrecision("momence_total").default(0),
+  stripeTotal: doublePrecision("stripe_total").default(0),
+  stripeFees: doublePrecision("stripe_fees").default(0),
+  stripeNet: doublePrecision("stripe_net").default(0),
+  nonStripeTotal: doublePrecision("non_stripe_total").default(0),
   matchedCount: integer("matched_count").default(0),
   unmatchedCount: integer("unmatched_count").default(0),
   status: text("status").default("completed"),
@@ -141,8 +141,8 @@ export const momenceTransactions = pgTable("momence_transactions", {
   category: text("category"),
   item: text("item"),
   date: text("date"),
-  saleValue: real("sale_value").default(0),
-  tax: real("tax").default(0),
+  saleValue: doublePrecision("sale_value").default(0),
+  tax: doublePrecision("tax").default(0),
   paymentMethod: text("payment_method"),
   customerEmail: text("customer_email"),
   customerName: text("customer_name"),
@@ -155,23 +155,23 @@ export const stripeTransactions = pgTable("stripe_transactions", {
   id: integer("id").primaryKey(),
   sessionId: varchar("session_id").notNull(),
   chargeId: text("charge_id"),
-  amount: real("amount").default(0),
-  fee: real("fee").default(0),
-  net: real("net").default(0),
+  amount: doublePrecision("amount").default(0),
+  fee: doublePrecision("fee").default(0),
+  net: doublePrecision("net").default(0),
   createdDate: text("created_date"),
   customerEmail: text("customer_email"),
   reportingCategory: text("reporting_category"),
 });
 
 export const customerComparison = pgTable("customer_comparison", {
-  id: integer("id").primaryKey(),
+  id: serial("id").primaryKey(),
   sessionId: varchar("session_id").notNull(),
   customerEmail: text("customer_email").notNull(),
-  momenceTotal: real("momence_total").default(0),
-  stripeAmount: real("stripe_amount").default(0),
-  stripeFee: real("stripe_fee").default(0),
-  stripeNet: real("stripe_net").default(0),
-  difference: real("difference").default(0),
+  momenceTotal: doublePrecision("momence_total").default(0),
+  stripeAmount: doublePrecision("stripe_amount").default(0),
+  stripeFee: doublePrecision("stripe_fee").default(0),
+  stripeNet: doublePrecision("stripe_net").default(0),
+  difference: doublePrecision("difference").default(0),
   matchStatus: text("match_status"),
   items: text("items"),
   transactionDate: text("transaction_date"),
@@ -179,25 +179,26 @@ export const customerComparison = pgTable("customer_comparison", {
 });
 
 export const paymentMethodSummary = pgTable("payment_method_summary", {
-  id: integer("id").primaryKey(),
+  id: serial("id").primaryKey(),
   sessionId: varchar("session_id").notNull(),
   paymentMethod: text("payment_method").notNull(),
   transactionCount: integer("transaction_count").default(0),
-  totalAmount: real("total_amount").default(0),
+  totalAmount: doublePrecision("total_amount").default(0),
   percentage: real("percentage").default(0),
   goesThruStripe: integer("goes_thru_stripe").default(0),
 });
 
 export const categorySummary = pgTable("category_summary", {
-  id: integer("id").primaryKey(),
+  id: serial("id").primaryKey(),
   sessionId: varchar("session_id").notNull(),
   category: text("category").notNull(),
   transactionCount: integer("transaction_count").default(0),
-  totalAmount: real("total_amount").default(0),
-  totalTax: real("total_tax").default(0),
+  totalAmount: doublePrecision("total_amount").default(0),
+  totalTax: doublePrecision("total_tax").default(0),
   btwRate: real("btw_rate").default(0),
   twinfieldAccount: text("twinfield_account"),
   percentage: real("percentage").default(0),
+  items: text("items"),
 });
 
 export const insertSessionSchema = createInsertSchema(reconciliationSessions).omit({
@@ -220,7 +221,7 @@ export interface CategoryItemDetail {
   date?: string;
 }
 
-export interface CategoryWithDetails extends CategorySummary {
+export interface CategoryWithDetails extends Omit<CategorySummary, "items"> {
   items?: CategoryItemDetail[];
 }
 

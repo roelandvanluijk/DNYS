@@ -665,6 +665,7 @@ async function processReconciliation(
     btwRate: data.btwRate,
     twinfieldAccount: data.twinfieldAccount,
     percentage: categoryTotal > 0 ? (data.total / categoryTotal) * 100 : 0,
+    items: null,
   }));
 
   await storage.addCategories(session.id, categories);

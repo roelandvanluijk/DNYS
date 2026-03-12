@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto";
-import type { 
-  ReconciliationSession, 
-  CustomerComparison, 
+import type {
+  ReconciliationSession,
+  CustomerComparison,
   PaymentMethodSummary,
   CategorySummary,
   CategoryItemDetail,
@@ -14,9 +14,9 @@ import type {
   AccrualEntry,
   InsertAccrualEntry
 } from "@shared/schema";
-import { productSettings, pendingReconciliations, accrualSchedule, categorySettings as categorySettingsTable, paymentMethodSettings, generalSettings as generalSettingsTable, DEFAULT_GENERAL_SETTINGS } from "@shared/schema";
+import { productSettings, pendingReconciliations, accrualSchedule, categorySettings as categorySettingsTable, paymentMethodSettings, generalSettings as generalSettingsTable, DEFAULT_GENERAL_SETTINGS, reconciliationSessions, customerComparison as customerComparisonTable, paymentMethodSummary as paymentMethodSummaryTable, categorySummary as categorySummaryTable } from "@shared/schema";
 import { db } from "./db";
-import { eq } from "drizzle-orm";
+import { eq, desc, and } from "drizzle-orm";
 import type { InsertCategorySettings, CategorySettingsDB, InsertPaymentMethodSettings, PaymentMethodSettingsDB, TwinfieldGeneralSettings } from "@shared/schema";
 
 export interface CategorySettings {
@@ -42,6 +42,7 @@ export interface IStorage {
   getSession(id: string): Promise<ReconciliationSession | undefined>;
   updateSession(id: string, updates: Partial<ReconciliationSession>): Promise<ReconciliationSession | undefined>;
   getAllSessions(): Promise<ReconciliationSession[]>;
+  deleteSession(id: string): Promise<boolean>;
   addComparisons(sessionId: string, comparisons: Omit<CustomerComparison, "id">[]): Promise<void>;
   getComparisons(sessionId: string): Promise<CustomerComparison[]>;
   addPaymentMethods(sessionId: string, methods: Omit<PaymentMethodSummary, "id">[]): Promise<void>;
@@ -54,23 +55,23 @@ export interface IStorage {
   getCategorySettings(): Promise<CategorySettings[] | null>;
   saveCategorySettings(settings: CategorySettings[]): Promise<void>;
   resetCategorySettings(): Promise<void>;
-  
+
   getProductByName(itemName: string): Promise<ProductSettings | undefined>;
   getAllProducts(): Promise<ProductSettings[]>;
   saveProduct(product: InsertProductSettings): Promise<ProductSettings>;
   updateProduct(id: number, updates: Partial<InsertProductSettings>): Promise<ProductSettings | undefined>;
   deleteProduct(id: number): Promise<void>;
   clearAllProducts(): Promise<void>;
-  
+
   savePendingReconciliation(data: InsertPendingReconciliation): Promise<PendingReconciliation>;
   getPendingReconciliation(id: string): Promise<PendingReconciliation | undefined>;
   getAllPendingReconciliations(): Promise<PendingReconciliation[]>;
   deletePendingReconciliation(id: string): Promise<void>;
   clearAllPendingReconciliations(): Promise<void>;
-  
+
   addAccrualEntries(sessionId: string, entries: InsertAccrualEntry[]): Promise<void>;
   getAccrualEntries(sessionId: string): Promise<AccrualEntry[]>;
-  
+
   getAllPaymentMethodSettings(): Promise<PaymentMethodSettingsDB[]>;
   savePaymentMethodSettings(methodName: string, twinfieldAccount: string, isStripeMethod: boolean): Promise<void>;
 
@@ -79,139 +80,97 @@ export interface IStorage {
   getAccrualEntriesByPeriod(bookingMonth: string): Promise<AccrualEntry[]>;
 }
 
-export class MemStorage implements IStorage {
-  private sessions: Map<string, ReconciliationSession>;
-  private comparisons: Map<string, CustomerComparison[]>;
-  private paymentMethods: Map<string, PaymentMethodSummary[]>;
-  private categories: Map<string, CategorySummary[]>;
-  private categoryItems: Map<string, Map<string, CategoryItemDetail[]>>;
-  private customCategorySettings: CategorySettings[] | null;
-  private comparisonIdCounter: number;
-  private methodIdCounter: number;
-  private categoryIdCounter: number;
-
-  constructor() {
-    this.sessions = new Map();
-    this.comparisons = new Map();
-    this.paymentMethods = new Map();
-    this.categories = new Map();
-    this.categoryItems = new Map();
-    this.customCategorySettings = null;
-    this.comparisonIdCounter = 1;
-    this.methodIdCounter = 1;
-    this.categoryIdCounter = 1;
-  }
+export class DatabaseStorage implements IStorage {
+  private customCategorySettings: CategorySettings[] | null = null;
 
   async createSession(session: Omit<ReconciliationSession, "id" | "createdAt">): Promise<ReconciliationSession> {
     const id = randomUUID();
-    const newSession: ReconciliationSession = {
-      ...session,
-      id,
-      createdAt: new Date(),
-    };
-    this.sessions.set(id, newSession);
-    return newSession;
+    const [created] = await db.insert(reconciliationSessions).values({ ...session, id }).returning();
+    return created;
   }
 
   async getSession(id: string): Promise<ReconciliationSession | undefined> {
-    return this.sessions.get(id);
+    const [session] = await db.select().from(reconciliationSessions).where(eq(reconciliationSessions.id, id));
+    return session || undefined;
   }
 
   async updateSession(id: string, updates: Partial<ReconciliationSession>): Promise<ReconciliationSession | undefined> {
-    const session = this.sessions.get(id);
-    if (!session) return undefined;
-    
-    const updatedSession = { ...session, ...updates };
-    this.sessions.set(id, updatedSession);
-    return updatedSession;
-  }
-
-  async deleteSession(id: string): Promise<boolean> {
-    const existed = this.sessions.has(id);
-    if (existed) {
-      this.sessions.delete(id);
-      this.comparisons.delete(id);
-      this.paymentMethods.delete(id);
-      this.categories.delete(id);
-      this.categoryItems.delete(id);
-    }
-    return existed;
+    const [updated] = await db.update(reconciliationSessions).set(updates).where(eq(reconciliationSessions.id, id)).returning();
+    return updated || undefined;
   }
 
   async getAllSessions(): Promise<ReconciliationSession[]> {
-    return Array.from(this.sessions.values()).sort((a, b) => {
-      const dateA = a.createdAt instanceof Date ? a.createdAt : new Date(a.createdAt);
-      const dateB = b.createdAt instanceof Date ? b.createdAt : new Date(b.createdAt);
-      return dateB.getTime() - dateA.getTime();
-    });
+    return await db.select().from(reconciliationSessions).orderBy(desc(reconciliationSessions.createdAt));
+  }
+
+  async deleteSession(id: string): Promise<boolean> {
+    const [session] = await db.select().from(reconciliationSessions).where(eq(reconciliationSessions.id, id));
+    if (!session) return false;
+    await db.delete(customerComparisonTable).where(eq(customerComparisonTable.sessionId, id));
+    await db.delete(paymentMethodSummaryTable).where(eq(paymentMethodSummaryTable.sessionId, id));
+    await db.delete(categorySummaryTable).where(eq(categorySummaryTable.sessionId, id));
+    await db.delete(accrualSchedule).where(eq(accrualSchedule.sessionId, id));
+    await db.delete(reconciliationSessions).where(eq(reconciliationSessions.id, id));
+    return true;
   }
 
   async addComparisons(sessionId: string, comps: Omit<CustomerComparison, "id">[]): Promise<void> {
-    const withIds = comps.map((c) => ({
-      ...c,
-      id: this.comparisonIdCounter++,
-    }));
-    this.comparisons.set(sessionId, withIds);
+    if (comps.length === 0) return;
+    await db.insert(customerComparisonTable).values(comps);
   }
 
   async getComparisons(sessionId: string): Promise<CustomerComparison[]> {
-    return this.comparisons.get(sessionId) || [];
+    return await db.select().from(customerComparisonTable).where(eq(customerComparisonTable.sessionId, sessionId));
   }
 
   async addPaymentMethods(sessionId: string, methods: Omit<PaymentMethodSummary, "id">[]): Promise<void> {
-    const withIds = methods.map((m) => ({
-      ...m,
-      id: this.methodIdCounter++,
-    }));
-    this.paymentMethods.set(sessionId, withIds);
+    if (methods.length === 0) return;
+    await db.insert(paymentMethodSummaryTable).values(methods);
   }
 
   async getPaymentMethods(sessionId: string): Promise<PaymentMethodSummary[]> {
-    return this.paymentMethods.get(sessionId) || [];
+    return await db.select().from(paymentMethodSummaryTable).where(eq(paymentMethodSummaryTable.sessionId, sessionId));
   }
 
   async addCategories(sessionId: string, cats: Omit<CategorySummary, "id">[]): Promise<void> {
-    const withIds = cats.map((c) => ({
-      ...c,
-      id: this.categoryIdCounter++,
-    }));
-    this.categories.set(sessionId, withIds);
+    if (cats.length === 0) return;
+    await db.insert(categorySummaryTable).values(cats);
   }
 
   async getCategories(sessionId: string): Promise<CategorySummary[]> {
-    return this.categories.get(sessionId) || [];
+    return await db.select().from(categorySummaryTable).where(eq(categorySummaryTable.sessionId, sessionId));
   }
 
   async addCategoryItems(sessionId: string, categoryName: string, items: CategoryItemDetail[]): Promise<void> {
-    if (!this.categoryItems.has(sessionId)) {
-      this.categoryItems.set(sessionId, new Map());
-    }
-    const sessionItems = this.categoryItems.get(sessionId)!;
-    sessionItems.set(categoryName, items);
+    await db.update(categorySummaryTable)
+      .set({ items: JSON.stringify(items) })
+      .where(and(
+        eq(categorySummaryTable.sessionId, sessionId),
+        eq(categorySummaryTable.category, categoryName)
+      ));
   }
 
   async getCategoryItems(sessionId: string, categoryName: string): Promise<CategoryItemDetail[]> {
-    const sessionItems = this.categoryItems.get(sessionId);
-    if (!sessionItems) return [];
-    return sessionItems.get(categoryName) || [];
+    const [row] = await db.select({ items: categorySummaryTable.items })
+      .from(categorySummaryTable)
+      .where(and(
+        eq(categorySummaryTable.sessionId, sessionId),
+        eq(categorySummaryTable.category, categoryName)
+      ));
+    if (!row?.items) return [];
+    try { return JSON.parse(row.items); } catch { return []; }
   }
 
   async getFullResult(sessionId: string): Promise<ReconciliationResult | undefined> {
     const session = await this.getSession(sessionId);
     if (!session) return undefined;
-
     const comparisons = await this.getComparisons(sessionId);
     const paymentMethods = await this.getPaymentMethods(sessionId);
     const baseCategories = await this.getCategories(sessionId);
-    
-    // Attach item details to each category
-    const categories: CategoryWithDetails[] = await Promise.all(
-      baseCategories.map(async (cat) => ({
-        ...cat,
-        items: await this.getCategoryItems(sessionId, cat.category),
-      }))
-    );
-
+    const categories: CategoryWithDetails[] = baseCategories.map(cat => ({
+      ...cat,
+      items: cat.items ? (() => { try { return JSON.parse(cat.items); } catch { return []; } })() : [],
+    }));
     return { session, comparisons, paymentMethods, categories };
   }
 
@@ -230,7 +189,6 @@ export class MemStorage implements IStorage {
   }
 
   async saveCategorySettings(settings: CategorySettings[]): Promise<void> {
-    // Delete all existing settings and insert new ones
     await db.delete(categorySettingsTable);
     for (const setting of settings) {
       await db.insert(categorySettingsTable).values({
@@ -240,7 +198,6 @@ export class MemStorage implements IStorage {
         keywords: JSON.stringify(setting.keywords),
       });
     }
-    // Also update in-memory cache for backward compatibility
     this.customCategorySettings = settings;
   }
 
@@ -248,11 +205,11 @@ export class MemStorage implements IStorage {
     await db.delete(categorySettingsTable);
     this.customCategorySettings = null;
   }
-  
+
   async getAllPaymentMethodSettings(): Promise<PaymentMethodSettingsDB[]> {
     return await db.select().from(paymentMethodSettings);
   }
-  
+
   async savePaymentMethodSettings(methodName: string, twinfieldAccount: string, isStripeMethod: boolean): Promise<void> {
     const existing = await db.select().from(paymentMethodSettings).where(eq(paymentMethodSettings.methodName, methodName));
     if (existing.length > 0) {
@@ -360,4 +317,4 @@ export class MemStorage implements IStorage {
   }
 }
 
-export const storage = new MemStorage();
+export const storage = new DatabaseStorage();

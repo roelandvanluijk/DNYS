@@ -90,7 +90,7 @@ ${lines.join("\n")}
 
 export interface TwinfieldExportInput {
   session: ReconciliationSession;
-  categories: CategorySummary[];
+  categories: Omit<CategorySummary, "items">[];
   paymentMethods: PaymentMethodSummary[];
   // Accrual entries from ALL sessions where bookingMonth = session.period (releases for this period)
   accrualReleases: AccrualEntry[];
