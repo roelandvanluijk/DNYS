@@ -65,6 +65,74 @@ function parseNumber(value: string | undefined): number {
   return isNaN(num) ? 0 : num;
 }
 
+async function pullStripeData(month: string): Promise<StripeRow[]> {
+  const key = process.env.STRIPE_SECRET_KEY;
+  if (!key) throw new Error("STRIPE_SECRET_KEY not configured");
+
+  const [year, mon] = month.split("-").map(Number);
+  const start = Math.floor(new Date(year, mon - 1, 1).getTime() / 1000);
+  const end = Math.floor(new Date(year, mon, 1).getTime() / 1000);
+
+  const rows: StripeRow[] = [];
+  let cursor: string | undefined;
+
+  do {
+    const params = new URLSearchParams({
+      "created[gte]": String(start),
+      "created[lte]": String(end),
+      type: "charge",
+      limit: "100",
+    });
+    params.append("expand[]", "data.source");
+    params.append("expand[]", "data.source.customer");
+    if (cursor) params.set("starting_after", cursor);
+
+    const resp = await fetch(
+      `https://api.stripe.com/v1/balance_transactions?${params}`,
+      { headers: { Authorization: `Bearer ${key}` } }
+    );
+
+    if (!resp.ok) {
+      const err = await resp.json() as { error?: { message: string } };
+      throw new Error(`Stripe API error: ${err.error?.message || resp.statusText}`);
+    }
+
+    const data = await resp.json() as {
+      has_more: boolean;
+      data: Array<{
+        id: string;
+        amount: number;
+        fee: number;
+        net: number;
+        created: number;
+        reporting_category: string;
+        source?: {
+          billing_details?: { email?: string | null };
+          customer?: { email?: string | null } | string | null;
+        };
+      }>;
+    };
+
+    for (const txn of data.data) {
+      const src = txn.source;
+      const email =
+        src?.billing_details?.email ||
+        (typeof src?.customer === "object" && src?.customer !== null ? src.customer?.email : null) ||
+        "";
+      rows.push({
+        gross: String(txn.amount / 100),
+        fee: String(txn.fee / 100),
+        customer_email: email || "",
+        reporting_category: txn.reporting_category,
+      });
+    }
+
+    cursor = data.has_more ? data.data[data.data.length - 1].id : undefined;
+  } while (cursor);
+
+  return rows;
+}
+
 function normalizeEmail(email: string | undefined): string {
   return (email || "").toLowerCase().trim();
 }
@@ -640,15 +708,19 @@ export async function registerRoutes(
       const stripeFile = files.stripe?.[0];
       const period = req.body.period || "";
 
-      if (!momenceFile || !stripeFile) {
-        console.error("Upload error: Missing files", { 
-          hasMomence: !!momenceFile, 
-          hasStripe: !!stripeFile 
+      const stripeSource = req.body.stripeSource as string | undefined;
+      const useStripeApi = stripeSource === "api";
+
+      if (!momenceFile || (!stripeFile && !useStripeApi)) {
+        console.error("Upload error: Missing files", {
+          hasMomence: !!momenceFile,
+          hasStripe: !!stripeFile,
+          useStripeApi,
         });
-        return res.status(400).json({ 
-          success: false, 
-          error: "Beide bestanden zijn vereist",
-          details: `Momence bestand: ${momenceFile ? 'ontvangen' : 'ontbreekt'}, Stripe bestand: ${stripeFile ? 'ontvangen' : 'ontbreekt'}`
+        return res.status(400).json({
+          success: false,
+          error: "Bestanden ontbreken",
+          details: `Momence bestand: ${momenceFile ? 'ontvangen' : 'ontbreekt'}, Stripe: ${useStripeApi ? 'via API' : stripeFile ? 'ontvangen' : 'ontbreekt'}`
         });
       }
 
@@ -661,37 +733,15 @@ export async function registerRoutes(
       });
 
       const momenceContent = momenceFile.buffer.toString("utf-8");
-      const stripeContent = stripeFile.buffer.toString("utf-8");
-
       const momenceResult = Papa.parse<MomenceRow>(momenceContent, {
         header: true,
         skipEmptyLines: true,
       });
 
-      const stripeResult = Papa.parse<StripeRow>(stripeContent, {
-        header: true,
-        skipEmptyLines: true,
-      });
-
-      // Log parsing results
-      console.log("CSV parsing results:", {
-        momenceRows: momenceResult.data.length,
-        momenceErrors: momenceResult.errors.length,
-        stripeRows: stripeResult.data.length,
-        stripeErrors: stripeResult.errors.length,
-      });
-
-      // Check for parsing errors
       if (momenceResult.errors.length > 0) {
         console.error("Momence CSV parsing errors:", momenceResult.errors.slice(0, 5));
       }
-      if (stripeResult.errors.length > 0) {
-        console.error("Stripe CSV parsing errors:", stripeResult.errors.slice(0, 5));
-      }
-
-      // Validate we have data
       if (momenceResult.data.length === 0) {
-        console.error("Momence file is empty or invalid");
         return res.status(400).json({
           success: false,
           error: "Momence bestand is leeg of ongeldig",
@@ -699,19 +749,32 @@ export async function registerRoutes(
         });
       }
 
-      if (stripeResult.data.length === 0) {
-        console.error("Stripe file is empty or invalid");
-        return res.status(400).json({
-          success: false,
-          error: "Stripe bestand is leeg of ongeldig",
-          details: "Het bestand bevat geen data. Controleer of je het juiste bestand hebt geüpload."
-        });
+      let stripeData: StripeRow[];
+      if (useStripeApi) {
+        if (!period) {
+          return res.status(400).json({ success: false, error: "Periode is vereist voor Stripe API pull" });
+        }
+        console.log("Pulling Stripe data via API for period:", period);
+        stripeData = await pullStripeData(period);
+        console.log(`Stripe API: ${stripeData.length} transactions retrieved`);
+      } else {
+        const stripeContent = stripeFile!.buffer.toString("utf-8");
+        const stripeResult = Papa.parse<StripeRow>(stripeContent, { header: true, skipEmptyLines: true });
+        if (stripeResult.errors.length > 0) {
+          console.error("Stripe CSV parsing errors:", stripeResult.errors.slice(0, 5));
+        }
+        if (stripeResult.data.length === 0) {
+          return res.status(400).json({
+            success: false,
+            error: "Stripe bestand is leeg of ongeldig",
+            details: "Het bestand bevat geen data. Controleer of je het juiste bestand hebt geüpload."
+          });
+        }
+        stripeData = stripeResult.data;
       }
 
-      // Check for required columns
       const momenceHeaders = Object.keys(momenceResult.data[0] || {});
-      const stripeHeaders = Object.keys(stripeResult.data[0] || {});
-      console.log("Detected headers:", { momenceHeaders, stripeHeaders });
+      console.log("Detected momence headers:", momenceHeaders);
 
       // Fetch custom category settings (if any)
       const customCategories = await storage.getCategorySettings();
@@ -728,7 +791,7 @@ export async function registerRoutes(
             id: tempSessionId,
             period,
             momenceData: JSON.stringify(momenceResult.data),
-            stripeData: JSON.stringify(stripeResult.data),
+            stripeData: JSON.stringify(stripeData),
             newProductCount: newProducts.length,
             status: "pending",
           });
@@ -746,7 +809,7 @@ export async function registerRoutes(
       }
 
       // Use the shared processing function
-      const result = await processReconciliation(momenceResult.data, stripeResult.data, period, customCategories);
+      const result = await processReconciliation(momenceResult.data, stripeData, period, customCategories);
       res.json({ success: true, sessionId: result.sessionId });
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : "Onbekende fout";
@@ -780,6 +843,10 @@ export async function registerRoutes(
         technicalError: process.env.NODE_ENV === 'development' ? errorMessage : undefined
       });
     }
+  });
+
+  app.get("/api/stripe/configured", (_req, res) => {
+    res.json({ configured: !!process.env.STRIPE_SECRET_KEY });
   });
 
   app.get("/api/sessions", async (req, res) => {

@@ -1,11 +1,11 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { useLocation } from "wouter";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
-import { Upload, ArrowRight, Info, Loader2 } from "lucide-react";
+import { Upload, ArrowRight, Info, Loader2, Zap } from "lucide-react";
 import dnysLogo from "@/assets/dnys-logo.svg";
 
 export default function UploadPage() {
@@ -17,9 +17,18 @@ export default function UploadPage() {
   });
   const [momenceFile, setMomenceFile] = useState<File | null>(null);
   const [stripeFile, setStripeFile] = useState<File | null>(null);
+  const [stripeMode, setStripeMode] = useState<"csv" | "api">("csv");
+  const [isStripeConfigured, setIsStripeConfigured] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [dragOverMomence, setDragOverMomence] = useState(false);
   const [dragOverStripe, setDragOverStripe] = useState(false);
+
+  useEffect(() => {
+    fetch("/api/stripe/configured")
+      .then((r) => r.json())
+      .then((d) => { if (d.configured) setIsStripeConfigured(true); })
+      .catch(() => {});
+  }, []);
 
   const handleDrop = useCallback((e: React.DragEvent, type: "momence" | "stripe") => {
     e.preventDefault();
@@ -48,10 +57,12 @@ export default function UploadPage() {
   };
 
   const handleSubmit = async () => {
-    if (!momenceFile || !stripeFile) {
+    if (!momenceFile || (stripeMode === "csv" && !stripeFile)) {
       toast({
         title: "Bestanden ontbreken",
-        description: "Upload beide CSV bestanden om door te gaan.",
+        description: stripeMode === "api"
+          ? "Upload het Momence CSV bestand om door te gaan."
+          : "Upload beide CSV bestanden om door te gaan.",
         variant: "destructive",
       });
       return;
@@ -63,7 +74,11 @@ export default function UploadPage() {
       const formData = new FormData();
       formData.append("period", period);
       formData.append("momence", momenceFile);
-      formData.append("stripe", stripeFile);
+      if (stripeMode === "api") {
+        formData.append("stripeSource", "api");
+      } else {
+        formData.append("stripe", stripeFile!);
+      }
 
       const response = await fetch("/api/reconcile", {
         method: "POST",
@@ -232,48 +247,77 @@ export default function UploadPage() {
                 </div>
 
                 <div>
-                  <Label className="text-sm font-medium mb-1.5 block">Stripe CSV</Label>
-                  <div
-                    className={`border-2 border-dashed rounded-lg p-6 text-center transition-all duration-200 cursor-pointer hover-elevate ${
-                      dragOverStripe
-                        ? "border-primary bg-primary/5"
-                        : stripeFile
-                        ? "border-chart-2 bg-chart-2/5"
-                        : "border-border hover:border-primary/50"
-                    }`}
-                    onDragOver={(e) => {
-                      e.preventDefault();
-                      setDragOverStripe(true);
-                    }}
-                    onDragLeave={() => setDragOverStripe(false)}
-                    onDrop={(e) => handleDrop(e, "stripe")}
-                    onClick={() => document.getElementById("stripe-input")?.click()}
-                    data-testid="dropzone-stripe"
-                  >
-                    <input
-                      id="stripe-input"
-                      type="file"
-                      accept=".csv"
-                      className="hidden"
-                      onChange={(e) => handleFileChange(e, "stripe")}
-                      data-testid="input-stripe"
-                    />
-                    <Upload className={`w-8 h-8 mx-auto mb-2 ${stripeFile ? "text-chart-2" : "text-muted-foreground"}`} />
-                    {stripeFile ? (
-                      <p className="font-medium text-chart-2">{stripeFile.name}</p>
-                    ) : (
-                      <>
-                        <p className="font-medium text-foreground">Klik of sleep bestand</p>
-                        <p className="text-sm text-muted-foreground mt-1">CSV bestand van Stripe</p>
-                      </>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <Label className="text-sm font-medium">Stripe</Label>
+                    {isStripeConfigured && (
+                      <div className="flex rounded-md border overflow-hidden text-xs">
+                        <button
+                          type="button"
+                          onClick={() => setStripeMode("csv")}
+                          className={`px-3 py-1 transition-colors ${stripeMode === "csv" ? "bg-primary text-primary-foreground" : "bg-background text-muted-foreground hover:bg-accent"}`}
+                        >
+                          CSV
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setStripeMode("api")}
+                          className={`px-3 py-1 flex items-center gap-1 transition-colors ${stripeMode === "api" ? "bg-primary text-primary-foreground" : "bg-background text-muted-foreground hover:bg-accent"}`}
+                        >
+                          <Zap className="w-3 h-3" />
+                          API
+                        </button>
+                      </div>
                     )}
                   </div>
+
+                  {stripeMode === "api" ? (
+                    <div className="border-2 border-dashed rounded-lg p-6 text-center border-primary/50 bg-primary/5">
+                      <Zap className="w-8 h-8 mx-auto mb-2 text-primary" />
+                      <p className="font-medium text-foreground">Pull from Stripe API</p>
+                      <p className="text-sm text-muted-foreground mt-1">
+                        Stripe data wordt automatisch opgehaald voor {period}
+                      </p>
+                    </div>
+                  ) : (
+                    <div
+                      className={`border-2 border-dashed rounded-lg p-6 text-center transition-all duration-200 cursor-pointer hover-elevate ${
+                        dragOverStripe
+                          ? "border-primary bg-primary/5"
+                          : stripeFile
+                          ? "border-chart-2 bg-chart-2/5"
+                          : "border-border hover:border-primary/50"
+                      }`}
+                      onDragOver={(e) => { e.preventDefault(); setDragOverStripe(true); }}
+                      onDragLeave={() => setDragOverStripe(false)}
+                      onDrop={(e) => handleDrop(e, "stripe")}
+                      onClick={() => document.getElementById("stripe-input")?.click()}
+                      data-testid="dropzone-stripe"
+                    >
+                      <input
+                        id="stripe-input"
+                        type="file"
+                        accept=".csv"
+                        className="hidden"
+                        onChange={(e) => handleFileChange(e, "stripe")}
+                        data-testid="input-stripe"
+                      />
+                      <Upload className={`w-8 h-8 mx-auto mb-2 ${stripeFile ? "text-chart-2" : "text-muted-foreground"}`} />
+                      {stripeFile ? (
+                        <p className="font-medium text-chart-2">{stripeFile.name}</p>
+                      ) : (
+                        <>
+                          <p className="font-medium text-foreground">Klik of sleep bestand</p>
+                          <p className="text-sm text-muted-foreground mt-1">CSV bestand van Stripe</p>
+                        </>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
 
               <Button
                 onClick={handleSubmit}
-                disabled={!momenceFile || !stripeFile || isLoading}
+                disabled={!momenceFile || (stripeMode === "csv" && !stripeFile) || isLoading}
                 className="w-full"
                 size="lg"
                 data-testid="button-submit"
