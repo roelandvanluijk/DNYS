@@ -9,7 +9,7 @@ import { STRIPE_PAYMENT_METHODS, REVENUE_CATEGORIES, type MatchStatus, type Cate
 // Emails to exclude from customer comparisons (studio's own email)
 const EXCLUDED_EMAILS = ["info@denieuweyogaschool.nl"];
 
-const upload = multer({ storage: multer.memoryStorage() });
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
 interface MomenceRow {
   Category?: string;

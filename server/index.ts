@@ -22,6 +22,22 @@ app.use(
 
 app.use(express.urlencoded({ extended: false }));
 
+// Basic auth — protects all /api routes
+app.use("/api", (req: Request, res: Response, next: NextFunction) => {
+  const password = process.env.APP_PASSWORD;
+  if (!password) return next(); // no password set = skip (dev mode)
+
+  const auth = req.headers.authorization;
+  if (auth && auth.startsWith("Basic ")) {
+    const decoded = Buffer.from(auth.slice(6), "base64").toString();
+    const [, pass] = decoded.split(":");
+    if (pass === password) return next();
+  }
+
+  res.setHeader("WWW-Authenticate", 'Basic realm="DNYS"');
+  res.status(401).json({ message: "Unauthorized" });
+});
+
 export function log(message: string, source = "express") {
   const formattedTime = new Date().toLocaleTimeString("en-US", {
     hour: "numeric",
