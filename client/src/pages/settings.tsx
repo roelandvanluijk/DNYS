@@ -8,12 +8,13 @@ import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
-import { 
-  ArrowLeft, 
+import {
+  ArrowLeft,
   Save,
   Settings,
   RotateCcw,
-  CreditCard
+  CreditCard,
+  FileCode
 } from "lucide-react";
 import dnysLogo from "@/assets/dnys-logo.svg";
 import { apiRequest } from "@/lib/queryClient";
@@ -24,6 +25,13 @@ interface CategoryConfig {
   btwRate: number;
   twinfieldAccount: string;
   group: "yoga" | "horeca";
+}
+
+interface GeneralSettingsConfig {
+  office: string;
+  journalCode: string;
+  accrualCrossAccount: string;
+  stripeFeeAccount: string;
 }
 
 interface PaymentMethodConfig {
@@ -50,8 +58,15 @@ export default function SettingsPage() {
   const queryClient = useQueryClient();
   const [editedCategories, setEditedCategories] = useState<CategoryConfig[]>([]);
   const [editedPaymentMethods, setEditedPaymentMethods] = useState<PaymentMethodConfig[]>([]);
+  const [editedGeneral, setEditedGeneral] = useState<GeneralSettingsConfig>({
+    office: "",
+    journalCode: "MEMO",
+    accrualCrossAccount: "1809",
+    stripeFeeAccount: "4900",
+  });
   const [hasChanges, setHasChanges] = useState(false);
   const [hasPaymentChanges, setHasPaymentChanges] = useState(false);
+  const [hasGeneralChanges, setHasGeneralChanges] = useState(false);
 
   const { data: categories, isLoading } = useQuery<CategoryConfig[]>({
     queryKey: ["/api/settings/categories"],
@@ -59,6 +74,10 @@ export default function SettingsPage() {
 
   const { data: paymentMethods, isLoading: isLoadingPayments } = useQuery<PaymentMethodConfig[]>({
     queryKey: ["/api/settings/payment-methods"],
+  });
+
+  const { data: generalSettingsData } = useQuery<GeneralSettingsConfig>({
+    queryKey: ["/api/settings/general"],
   });
 
   useEffect(() => {
@@ -74,6 +93,12 @@ export default function SettingsPage() {
       setEditedPaymentMethods(DEFAULT_PAYMENT_METHODS);
     }
   }, [paymentMethods]);
+
+  useEffect(() => {
+    if (generalSettingsData) {
+      setEditedGeneral(generalSettingsData);
+    }
+  }, [generalSettingsData]);
 
   const saveMutation = useMutation({
     mutationFn: async (cats: CategoryConfig[]) => {
@@ -130,6 +155,25 @@ export default function SettingsPage() {
       });
     },
   });
+
+  const saveGeneralMutation = useMutation({
+    mutationFn: async (cfg: GeneralSettingsConfig) => {
+      return apiRequest("POST", "/api/settings/general", cfg);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/settings/general"] });
+      setHasGeneralChanges(false);
+      toast({ title: "Opgeslagen", description: "Twinfield export instellingen bijgewerkt." });
+    },
+    onError: () => {
+      toast({ title: "Fout", description: "Kon instellingen niet opslaan.", variant: "destructive" });
+    },
+  });
+
+  const handleGeneralChange = (field: keyof GeneralSettingsConfig, value: string) => {
+    setEditedGeneral(prev => ({ ...prev, [field]: value }));
+    setHasGeneralChanges(true);
+  };
 
   const handlePaymentMethodTwinfieldChange = (index: number, value: string) => {
     const updated = [...editedPaymentMethods];
@@ -223,6 +267,79 @@ export default function SettingsPage() {
             </Button>
           </div>
         </div>
+
+        <Card className="mb-6">
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <FileCode className="w-5 h-5 text-muted-foreground" />
+                <CardTitle>Twinfield Export Instellingen</CardTitle>
+              </div>
+              <Button
+                onClick={() => saveGeneralMutation.mutate(editedGeneral)}
+                disabled={!hasGeneralChanges || saveGeneralMutation.isPending}
+                size="sm"
+                className="gap-2"
+                data-testid="btn-save-general"
+              >
+                <Save className="w-4 h-4" />
+                Opslaan
+              </Button>
+            </div>
+            <CardDescription>
+              Configuratie voor de Twinfield XML export. Pas grootboekrekeningen aan zodat ze
+              overeenkomen met de inrichting in Twinfield.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="space-y-1">
+                <label className="text-sm font-medium">Twinfield kantoorcode</label>
+                <Input
+                  value={editedGeneral.office}
+                  onChange={e => handleGeneralChange("office", e.target.value)}
+                  className="font-mono"
+                  placeholder="bijv. DNYS"
+                  data-testid="input-general-office"
+                />
+                <p className="text-xs text-muted-foreground">De &lt;office&gt; code in Twinfield (verplicht voor import)</p>
+              </div>
+              <div className="space-y-1">
+                <label className="text-sm font-medium">Dagboekcode</label>
+                <Input
+                  value={editedGeneral.journalCode}
+                  onChange={e => handleGeneralChange("journalCode", e.target.value)}
+                  className="font-mono"
+                  placeholder="bijv. MEMO"
+                  data-testid="input-general-journal"
+                />
+                <p className="text-xs text-muted-foreground">Twinfield transactietype voor memoriaalboekingen</p>
+              </div>
+              <div className="space-y-1">
+                <label className="text-sm font-medium">Tussenrekening accruals</label>
+                <Input
+                  value={editedGeneral.accrualCrossAccount}
+                  onChange={e => handleGeneralChange("accrualCrossAccount", e.target.value)}
+                  className="font-mono"
+                  placeholder="1809"
+                  data-testid="input-general-accrual"
+                />
+                <p className="text-xs text-muted-foreground">Uitgestelde omzet voor Opleidingen en Jaarabonnementen</p>
+              </div>
+              <div className="space-y-1">
+                <label className="text-sm font-medium">Stripe kosten rekening</label>
+                <Input
+                  value={editedGeneral.stripeFeeAccount}
+                  onChange={e => handleGeneralChange("stripeFeeAccount", e.target.value)}
+                  className="font-mono"
+                  placeholder="4900"
+                  data-testid="input-general-stripe-fee"
+                />
+                <p className="text-xs text-muted-foreground">Bankkosten / PSP-kosten voor Stripe transactiekosten</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
 
         <Card className="mb-6">
           <CardHeader>

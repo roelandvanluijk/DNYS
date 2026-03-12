@@ -14,10 +14,10 @@ import type {
   AccrualEntry,
   InsertAccrualEntry
 } from "@shared/schema";
-import { productSettings, pendingReconciliations, accrualSchedule, categorySettings as categorySettingsTable, paymentMethodSettings } from "@shared/schema";
+import { productSettings, pendingReconciliations, accrualSchedule, categorySettings as categorySettingsTable, paymentMethodSettings, generalSettings as generalSettingsTable, DEFAULT_GENERAL_SETTINGS } from "@shared/schema";
 import { db } from "./db";
 import { eq } from "drizzle-orm";
-import type { InsertCategorySettings, CategorySettingsDB, InsertPaymentMethodSettings, PaymentMethodSettingsDB } from "@shared/schema";
+import type { InsertCategorySettings, CategorySettingsDB, InsertPaymentMethodSettings, PaymentMethodSettingsDB, TwinfieldGeneralSettings } from "@shared/schema";
 
 export interface CategorySettings {
   name: string;
@@ -73,6 +73,10 @@ export interface IStorage {
   
   getAllPaymentMethodSettings(): Promise<PaymentMethodSettingsDB[]>;
   savePaymentMethodSettings(methodName: string, twinfieldAccount: string, isStripeMethod: boolean): Promise<void>;
+
+  getGeneralSettings(): Promise<TwinfieldGeneralSettings>;
+  saveGeneralSettings(settings: TwinfieldGeneralSettings): Promise<void>;
+  getAccrualEntriesByPeriod(bookingMonth: string): Promise<AccrualEntry[]>;
 }
 
 export class MemStorage implements IStorage {
@@ -324,6 +328,35 @@ export class MemStorage implements IStorage {
 
   async getAccrualEntries(sessionId: string): Promise<AccrualEntry[]> {
     return await db.select().from(accrualSchedule).where(eq(accrualSchedule.sessionId, sessionId));
+  }
+
+  async getAccrualEntriesByPeriod(bookingMonth: string): Promise<AccrualEntry[]> {
+    return await db.select().from(accrualSchedule).where(eq(accrualSchedule.bookingMonth, bookingMonth));
+  }
+
+  async getGeneralSettings(): Promise<TwinfieldGeneralSettings> {
+    const rows = await db.select().from(generalSettingsTable);
+    const map = new Map(rows.map(r => [r.key, r.value]));
+    return {
+      office: map.get("office") ?? DEFAULT_GENERAL_SETTINGS.office,
+      journalCode: map.get("journalCode") ?? DEFAULT_GENERAL_SETTINGS.journalCode,
+      accrualCrossAccount: map.get("accrualCrossAccount") ?? DEFAULT_GENERAL_SETTINGS.accrualCrossAccount,
+      stripeFeeAccount: map.get("stripeFeeAccount") ?? DEFAULT_GENERAL_SETTINGS.stripeFeeAccount,
+    };
+  }
+
+  async saveGeneralSettings(settings: TwinfieldGeneralSettings): Promise<void> {
+    const entries = Object.entries(settings) as [string, string][];
+    for (const [key, value] of entries) {
+      const existing = await db.select().from(generalSettingsTable).where(eq(generalSettingsTable.key, key));
+      if (existing.length > 0) {
+        await db.update(generalSettingsTable)
+          .set({ value, updatedAt: new Date() })
+          .where(eq(generalSettingsTable.key, key));
+      } else {
+        await db.insert(generalSettingsTable).values({ key, value });
+      }
+    }
   }
 }
 

@@ -8,10 +8,10 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
 import { 
-  Download, 
-  ArrowLeft, 
-  Check, 
-  AlertTriangle, 
+  Download,
+  ArrowLeft,
+  Check,
+  AlertTriangle,
   X,
   TrendingUp,
   CreditCard,
@@ -20,7 +20,8 @@ import {
   AlertCircle,
   Users,
   Lock,
-  Unlock
+  Unlock,
+  FileCode
 } from "lucide-react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
@@ -513,6 +514,10 @@ export default function ResultsPage() {
     window.open(`/api/sessions/${params.sessionId}/download`, "_blank");
   };
 
+  const handleDownloadXml = () => {
+    window.open(`/api/sessions/${params.sessionId}/export/twinfield`, "_blank");
+  };
+
   if (error) {
     return (
       <div className="min-h-screen flex items-center justify-center p-4">
@@ -635,6 +640,10 @@ export default function ResultsPage() {
                 </AlertDialogContent>
               </AlertDialog>
             )}
+            <Button variant="outline" onClick={handleDownloadXml} disabled={isLoading} data-testid="button-download-xml">
+              <FileCode className="w-4 h-4 mr-2" />
+              Twinfield XML
+            </Button>
             <Button onClick={handleDownload} disabled={isLoading} data-testid="button-download">
               <Download className="w-4 h-4 mr-2" />
               Download Excel

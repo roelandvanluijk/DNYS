@@ -399,6 +399,29 @@ export const REVENUE_CATEGORIES: Record<string, CategoryConfigWithSpecial> = {
   },
 };
 
+// General Twinfield export settings (office code, journal code, cross accounts)
+export const generalSettings = pgTable("general_settings", {
+  key: text("key").primaryKey(),
+  value: text("value").notNull(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export type GeneralSettingsRow = typeof generalSettings.$inferSelect;
+
+export const DEFAULT_GENERAL_SETTINGS = {
+  office: "",
+  journalCode: "MEMO",
+  accrualCrossAccount: "1809",
+  stripeFeeAccount: "4900",
+};
+
+export interface TwinfieldGeneralSettings {
+  office: string;
+  journalCode: string;
+  accrualCrossAccount: string;
+  stripeFeeAccount: string;
+}
+
 export const users = pgTable("users", {
   id: varchar("id").primaryKey(),
   username: text("username").notNull().unique(),

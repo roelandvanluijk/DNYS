@@ -5,6 +5,7 @@ import Papa from "papaparse";
 import ExcelJS from "exceljs";
 import { storage, type NewProductSuggestion } from "./storage";
 import { STRIPE_PAYMENT_METHODS, REVENUE_CATEGORIES, type MatchStatus, type CategoryConfig, type ProductSettings, type InsertAccrualEntry } from "@shared/schema";
+import { generateTwinfieldXml } from "./twinfield";
 
 // Emails to exclude from customer comparisons (studio's own email)
 const EXCLUDED_EMAILS = ["info@denieuweyogaschool.nl"];
@@ -1468,6 +1469,68 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Save payment method settings batch error:", error);
       res.status(500).json({ error: "Kon betaalmethode instellingen niet opslaan" });
+    }
+  });
+
+  // General Twinfield export settings (office code, journal code, cross accounts)
+  app.get("/api/settings/general", async (req, res) => {
+    try {
+      const settings = await storage.getGeneralSettings();
+      res.json(settings);
+    } catch (error) {
+      console.error("Get general settings error:", error);
+      res.status(500).json({ error: "Kon instellingen niet ophalen" });
+    }
+  });
+
+  app.post("/api/settings/general", async (req, res) => {
+    try {
+      const { office, journalCode, accrualCrossAccount, stripeFeeAccount } = req.body;
+      if (!journalCode || !accrualCrossAccount) {
+        return res.status(400).json({ error: "journalCode en accrualCrossAccount zijn verplicht" });
+      }
+      await storage.saveGeneralSettings({ office: office ?? "", journalCode, accrualCrossAccount, stripeFeeAccount: stripeFeeAccount ?? "" });
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Save general settings error:", error);
+      res.status(500).json({ error: "Kon instellingen niet opslaan" });
+    }
+  });
+
+  // Twinfield XML export for a reconciliation session
+  app.get("/api/sessions/:sessionId/export/twinfield", async (req, res) => {
+    try {
+      const result = await storage.getFullResult(req.params.sessionId);
+      if (!result) {
+        return res.status(404).json({ error: "Sessie niet gevonden" });
+      }
+
+      const [generalSettings, paymentMethodSettings, accrualReleases] = await Promise.all([
+        storage.getGeneralSettings(),
+        storage.getAllPaymentMethodSettings(),
+        storage.getAccrualEntriesByPeriod(result.session.period),
+      ]);
+
+      const xml = generateTwinfieldXml({
+        session: result.session,
+        categories: result.categories,
+        paymentMethods: result.paymentMethods,
+        accrualReleases,
+        generalSettings,
+        paymentMethodSettings: paymentMethodSettings.map(pm => ({
+          methodName: pm.methodName,
+          twinfieldAccount: pm.twinfieldAccount ?? "",
+          isStripeMethod: pm.isStripeMethod ?? false,
+        })),
+      });
+
+      const filename = `twinfield-${result.session.period}.xml`;
+      res.setHeader("Content-Type", "application/xml; charset=utf-8");
+      res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+      res.send(xml);
+    } catch (error) {
+      console.error("Twinfield export error:", error);
+      res.status(500).json({ error: "Kon Twinfield XML niet genereren" });
     }
   });
 
