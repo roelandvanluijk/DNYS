@@ -114,7 +114,7 @@ export default function ProductsPage() {
         category: categoryName,
         btwRate: categoryConfig.btwRate,
         twinfieldAccount: categoryConfig.twinfield,
-        hasAccrual: categoryName === "Opleidingen" ? prev.hasAccrual : false,
+        hasAccrual: (categoryName === "Opleidingen" || categoryName === "Teacher Training") ? prev.hasAccrual : false,
         hasSpread: categoryName === "Jaarabonnementen" ? prev.hasSpread : false,
       }));
     }
@@ -256,7 +256,7 @@ export default function ProductsPage() {
                           </div>
                         </div>
 
-                        {editForm.category === "Opleidingen" && (
+                        {(editForm.category === "Opleidingen" || editForm.category === "Teacher Training") && (
                           <div className="p-3 rounded bg-accent/30 space-y-2">
                             <div className="flex items-center gap-2">
                               <Checkbox

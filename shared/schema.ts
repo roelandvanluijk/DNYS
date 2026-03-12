@@ -281,6 +281,7 @@ export const REVENUE_CATEGORIES: Record<string, CategoryConfigWithSpecial> = {
     btwRate: 0.21,
     twinfieldAccount: '4050',
     group: 'yoga',
+    specialHandling: 'accrual',
     priority: 3,
   },
   'Jaarabonnementen': {

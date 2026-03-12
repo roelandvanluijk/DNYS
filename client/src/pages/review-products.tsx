@@ -121,7 +121,7 @@ export default function ReviewProductsPage() {
         category: categoryName,
         btwRate: categoryConfig.btwRate,
         twinfieldAccount: categoryConfig.twinfield,
-        hasAccrual: categoryName === "Opleidingen",
+        hasAccrual: categoryName === "Opleidingen" || categoryName === "Teacher Training",
         hasSpread: categoryName === "Jaarabonnementen",
       });
     }
@@ -357,7 +357,7 @@ export default function ReviewProductsPage() {
                     </div>
                   </div>
 
-                  {product.category === "Opleidingen" && (
+                  {(product.category === "Opleidingen" || product.category === "Teacher Training") && (
                     <div className="p-4 rounded-lg bg-accent/30 space-y-3">
                       <div className="flex items-center gap-2">
                         <Checkbox
