@@ -1,11 +1,19 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { useLocation } from "wouter";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
-import { Upload, ArrowRight, Info, Loader2, Zap } from "lucide-react";
+import { Upload, ArrowRight, Info, Loader2, Zap, CheckCircle2 } from "lucide-react";
+
+const API_STEPS = [
+  { label: "Momence CSV inlezen…", duration: 2000 },
+  { label: "Verbinden met Stripe API…", duration: 3000 },
+  { label: "Transacties ophalen…", duration: 90000 },
+  { label: "Producten controleren…", duration: 5000 },
+  { label: "Categorieën berekenen…", duration: 5000 },
+];
 import dnysLogo from "@/assets/dnys-logo.svg";
 
 export default function UploadPage() {
@@ -20,6 +28,9 @@ export default function UploadPage() {
   const [stripeMode, setStripeMode] = useState<"csv" | "api">("csv");
   const [isStripeConfigured, setIsStripeConfigured] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [currentStep, setCurrentStep] = useState(-1);
+  const [completedSteps, setCompletedSteps] = useState<number[]>([]);
+  const stepTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
   const [dragOverMomence, setDragOverMomence] = useState(false);
   const [dragOverStripe, setDragOverStripe] = useState(false);
 
@@ -56,6 +67,25 @@ export default function UploadPage() {
     }
   };
 
+  const startProgressSteps = () => {
+    setCurrentStep(0);
+    setCompletedSteps([]);
+    let elapsed = 0;
+    API_STEPS.forEach((step, i) => {
+      const t1 = setTimeout(() => setCurrentStep(i), elapsed);
+      elapsed += step.duration;
+      const t2 = setTimeout(() => setCompletedSteps((prev) => [...prev, i]), elapsed);
+      stepTimersRef.current.push(t1, t2);
+    });
+  };
+
+  const clearProgressSteps = () => {
+    stepTimersRef.current.forEach(clearTimeout);
+    stepTimersRef.current = [];
+    setCurrentStep(-1);
+    setCompletedSteps([]);
+  };
+
   const handleSubmit = async () => {
     if (!momenceFile || (stripeMode === "csv" && !stripeFile)) {
       toast({
@@ -69,6 +99,7 @@ export default function UploadPage() {
     }
 
     setIsLoading(true);
+    if (stripeMode === "api") startProgressSteps();
 
     try {
       const formData = new FormData();
@@ -88,6 +119,7 @@ export default function UploadPage() {
       const data = await response.json();
 
       if (data.success && data.needsReview) {
+        clearProgressSteps();
         toast({
           title: "Nieuwe producten gevonden",
           description: `${data.newProductCount} nieuwe producten moeten worden beoordeeld.`,
@@ -97,10 +129,11 @@ export default function UploadPage() {
           newProducts: data.newProducts,
           period,
           momenceFileName: momenceFile.name,
-          stripeFileName: stripeFile.name,
+          stripeFileName: stripeFile?.name ?? "API mode",
         }));
         navigate("/review-products");
       } else if (data.success && data.sessionId) {
+        clearProgressSteps();
         toast({
           title: "Verwerking voltooid",
           description: "Je resultaten zijn klaar om te bekijken.",
@@ -113,21 +146,18 @@ export default function UploadPage() {
         throw new Error(errorMessage + errorDetails);
       }
     } catch (error) {
+      clearProgressSteps();
       let errorDescription = "Er is een fout opgetreden";
-      
       if (error instanceof Error) {
         errorDescription = error.message;
       } else if (typeof error === 'object' && error !== null) {
         errorDescription = JSON.stringify(error);
       }
-      
       toast({
         title: "Fout bij verwerking",
         description: errorDescription,
         variant: "destructive",
       });
-      
-      // Also log to console for debugging
       console.error("Upload error:", error);
     } finally {
       setIsLoading(false);
@@ -271,12 +301,37 @@ export default function UploadPage() {
                   </div>
 
                   {stripeMode === "api" ? (
-                    <div className="border-2 border-dashed rounded-lg p-6 text-center border-primary/50 bg-primary/5">
-                      <Zap className="w-8 h-8 mx-auto mb-2 text-primary" />
-                      <p className="font-medium text-foreground">Pull from Stripe API</p>
-                      <p className="text-sm text-muted-foreground mt-1">
-                        Stripe data wordt automatisch opgehaald voor {period}
-                      </p>
+                    <div className="border-2 border-dashed rounded-lg p-6 border-primary/50 bg-primary/5">
+                      {isLoading ? (
+                        <div className="space-y-2">
+                          {API_STEPS.map((step, i) => {
+                            const done = completedSteps.includes(i);
+                            const active = currentStep === i && !done;
+                            return (
+                              <div key={i} className={`flex items-center gap-3 text-sm transition-opacity ${i > currentStep ? "opacity-30" : "opacity-100"}`}>
+                                {done ? (
+                                  <CheckCircle2 className="w-4 h-4 text-green-600 shrink-0" />
+                                ) : active ? (
+                                  <Loader2 className="w-4 h-4 animate-spin text-primary shrink-0" />
+                                ) : (
+                                  <div className="w-4 h-4 rounded-full border border-muted-foreground/30 shrink-0" />
+                                )}
+                                <span className={done ? "text-muted-foreground line-through" : active ? "font-medium text-foreground" : "text-muted-foreground"}>
+                                  {step.label}
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <div className="text-center">
+                          <Zap className="w-8 h-8 mx-auto mb-2 text-primary" />
+                          <p className="font-medium text-foreground">Pull from Stripe API</p>
+                          <p className="text-sm text-muted-foreground mt-1">
+                            Stripe data wordt automatisch opgehaald voor {period}
+                          </p>
+                        </div>
+                      )}
                     </div>
                   ) : (
                     <div
