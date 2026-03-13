@@ -729,8 +729,8 @@ export async function registerRoutes(
       console.log("Processing files:", {
         momenceFileName: momenceFile.originalname,
         momenceSize: momenceFile.size,
-        stripeFileName: stripeFile.originalname,
-        stripeSize: stripeFile.size,
+        stripeFileName: stripeFile?.originalname ?? "API mode",
+        stripeSize: stripeFile?.size ?? 0,
         period: period
       });
 
