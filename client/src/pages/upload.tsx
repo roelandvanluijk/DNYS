@@ -71,11 +71,15 @@ export default function UploadPage() {
     setCurrentStep(0);
     setCompletedSteps([]);
     let elapsed = 0;
+    // Auto-advance all steps except the last — that stays spinning until the response arrives
     API_STEPS.forEach((step, i) => {
       const t1 = setTimeout(() => setCurrentStep(i), elapsed);
       elapsed += step.duration;
-      const t2 = setTimeout(() => setCompletedSteps((prev) => [...prev, i]), elapsed);
-      stepTimersRef.current.push(t1, t2);
+      if (i < API_STEPS.length - 1) {
+        const t2 = setTimeout(() => setCompletedSteps((prev) => [...prev, i]), elapsed);
+        stepTimersRef.current.push(t2);
+      }
+      stepTimersRef.current.push(t1);
     });
   };
 
