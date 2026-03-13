@@ -388,7 +388,7 @@ export default function ReviewProductsPage() {
                               <Input
                                 type="date"
                                 value={product.accrualEndDate}
-                                min={new Date().toISOString().split("T")[0]}
+                                min={product.accrualStartDate || undefined}
                                 onChange={(e) => updateProduct(index, { accrualEndDate: e.target.value })}
                                 className="mt-1.5"
                                 data-testid={`input-accrual-end-${index}`}
@@ -436,7 +436,7 @@ export default function ReviewProductsPage() {
                               <Input
                                 type="date"
                                 value={product.spreadEndDate}
-                                min={new Date().toISOString().split("T")[0]}
+                                min={product.spreadStartDate || undefined}
                                 onChange={(e) => updateProduct(index, { spreadEndDate: e.target.value })}
                                 className="mt-1.5"
                                 data-testid={`input-spread-end-${index}`}
