@@ -83,12 +83,12 @@ async function pullStripeData(month: string): Promise<StripeRow[]> {
       "created[lt]": String(end),
       limit: "100",
     });
-    params.append("expand[]", "data.source");
-    params.append("expand[]", "data.source.customer");
+    params.append("expand[]", "data.customer");
+    params.append("expand[]", "data.balance_transaction");
     if (cursor) params.set("starting_after", cursor);
 
     const resp = await fetch(
-      `https://api.stripe.com/v1/balance_transactions?${params}`,
+      `https://api.stripe.com/v1/charges?${params}`,
       { headers: { Authorization: `Bearer ${key}` } }
     );
 
@@ -102,28 +102,30 @@ async function pullStripeData(month: string): Promise<StripeRow[]> {
       data: Array<{
         id: string;
         amount: number;
-        fee: number;
-        net: number;
+        status: string;
         created: number;
-        reporting_category: string;
-        source?: {
-          billing_details?: { email?: string | null };
-          customer?: { email?: string | null } | string | null;
-        };
+        customer?: { email?: string | null } | string | null;
+        billing_details?: { email?: string | null };
+        balance_transaction?: {
+          fee: number;
+          net: number;
+        } | string | null;
       }>;
     };
 
-    for (const txn of data.data) {
-      const src = txn.source;
+    for (const charge of data.data) {
       const email =
-        src?.billing_details?.email ||
-        (typeof src?.customer === "object" && src?.customer !== null ? src.customer?.email : null) ||
+        charge.billing_details?.email ||
+        (typeof charge.customer === "object" && charge.customer !== null ? charge.customer?.email : null) ||
         "";
+      const fee = typeof charge.balance_transaction === "object" && charge.balance_transaction !== null
+        ? charge.balance_transaction.fee / 100
+        : 0;
       rows.push({
-        gross: String(txn.amount / 100),
-        fee: String(txn.fee / 100),
-        customer_email: email || "",
-        reporting_category: txn.reporting_category,
+        Amount: String(charge.amount / 100),
+        Fee: String(fee),
+        "Customer Email": email || "",
+        Status: charge.status === "succeeded" ? "Paid" : charge.status,
       });
     }
 
