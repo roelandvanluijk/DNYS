@@ -80,8 +80,7 @@ async function pullStripeData(month: string): Promise<StripeRow[]> {
   do {
     const params = new URLSearchParams({
       "created[gte]": String(start),
-      "created[lte]": String(end),
-      type: "charge",
+      "created[lt]": String(end),
       limit: "100",
     });
     params.append("expand[]", "data.source");
