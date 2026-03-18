@@ -159,7 +159,8 @@ export default function ReviewProductsPage() {
       });
 
       console.log("Calling continue endpoint with tempSessionId:", tempSessionId);
-      const continueResponse = await apiRequest("POST", `/api/reconcile/continue/${tempSessionId}`) as unknown as ContinueResponse;
+      const continueRes = await apiRequest("POST", `/api/reconcile/continue/${tempSessionId}`);
+      const continueResponse = await continueRes.json() as ContinueResponse;
       console.log("Continue response:", continueResponse);
       
       sessionStorage.removeItem("newProductsData");
@@ -219,13 +220,14 @@ export default function ReviewProductsPage() {
       }));
 
       console.log("Saving products:", productData.length);
-      const response = await apiRequest("POST", "/api/products/save-only", {
+      const res = await apiRequest("POST", "/api/products/save-only", {
         products: productData,
         tempSessionId,
-      }) as unknown as { success: boolean; message?: string; error?: string };
-      
+      });
+      const response = await res.json() as { success: boolean; message?: string; error?: string };
+
       console.log("Save only response:", response);
-      
+
       if (response.success) {
         sessionStorage.removeItem("newProductsData");
         toast({
