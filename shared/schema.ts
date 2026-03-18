@@ -40,6 +40,14 @@ export const insertProductSettingsSchema = createInsertSchema(productSettings).o
 export type InsertProductSettings = z.infer<typeof insertProductSettingsSchema>;
 export type ProductSettings = typeof productSettings.$inferSelect;
 
+export const stripeCache = pgTable("stripe_cache", {
+  id: serial("id").primaryKey(),
+  period: text("period").notNull().unique(),
+  data: text("data").notNull(),
+  transactionCount: integer("transaction_count").default(0),
+  fetchedAt: timestamp("fetched_at").defaultNow(),
+});
+
 export const pendingReconciliations = pgTable("pending_reconciliations", {
   id: varchar("id").primaryKey(),
   period: text("period").notNull(),

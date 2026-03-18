@@ -14,7 +14,7 @@ import type {
   AccrualEntry,
   InsertAccrualEntry
 } from "@shared/schema";
-import { productSettings, pendingReconciliations, accrualSchedule, categorySettings as categorySettingsTable, paymentMethodSettings, generalSettings as generalSettingsTable, DEFAULT_GENERAL_SETTINGS, reconciliationSessions, customerComparison as customerComparisonTable, paymentMethodSummary as paymentMethodSummaryTable, categorySummary as categorySummaryTable } from "@shared/schema";
+import { productSettings, pendingReconciliations, accrualSchedule, categorySettings as categorySettingsTable, paymentMethodSettings, generalSettings as generalSettingsTable, DEFAULT_GENERAL_SETTINGS, reconciliationSessions, customerComparison as customerComparisonTable, paymentMethodSummary as paymentMethodSummaryTable, categorySummary as categorySummaryTable, stripeCache } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and } from "drizzle-orm";
 import type { InsertCategorySettings, CategorySettingsDB, InsertPaymentMethodSettings, PaymentMethodSettingsDB, TwinfieldGeneralSettings } from "@shared/schema";
@@ -78,6 +78,9 @@ export interface IStorage {
   getGeneralSettings(): Promise<TwinfieldGeneralSettings>;
   saveGeneralSettings(settings: TwinfieldGeneralSettings): Promise<void>;
   getAccrualEntriesByPeriod(bookingMonth: string): Promise<AccrualEntry[]>;
+
+  getStripeCache(period: string): Promise<{ data: string; transactionCount: number; fetchedAt: Date | null } | undefined>;
+  saveStripeCache(period: string, data: string, transactionCount: number): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -314,6 +317,17 @@ export class DatabaseStorage implements IStorage {
         await db.insert(generalSettingsTable).values({ key, value });
       }
     }
+  }
+
+  async getStripeCache(period: string): Promise<{ data: string; transactionCount: number; fetchedAt: Date | null } | undefined> {
+    const [row] = await db.select().from(stripeCache).where(eq(stripeCache.period, period));
+    if (!row) return undefined;
+    return { data: row.data, transactionCount: row.transactionCount ?? 0, fetchedAt: row.fetchedAt };
+  }
+
+  async saveStripeCache(period: string, data: string, transactionCount: number): Promise<void> {
+    await db.delete(stripeCache).where(eq(stripeCache.period, period));
+    await db.insert(stripeCache).values({ period, data, transactionCount });
   }
 }
 

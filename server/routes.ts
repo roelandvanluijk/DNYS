@@ -756,9 +756,17 @@ export async function registerRoutes(
         if (!period) {
           return res.status(400).json({ success: false, error: "Periode is vereist voor Stripe API pull" });
         }
-        console.log("Pulling Stripe data via API for period:", period);
-        stripeData = await pullStripeData(period);
-        console.log(`Stripe API: ${stripeData.length} transactions retrieved`);
+
+        const cached = await storage.getStripeCache(period);
+        if (cached) {
+          stripeData = JSON.parse(cached.data);
+          console.log(`Stripe cache hit for ${period}: ${cached.transactionCount} transactions (cached at ${cached.fetchedAt})`);
+        } else {
+          console.log("Pulling Stripe data via API for period:", period);
+          stripeData = await pullStripeData(period);
+          await storage.saveStripeCache(period, JSON.stringify(stripeData), stripeData.length);
+          console.log(`Stripe API: ${stripeData.length} transactions retrieved and cached`);
+        }
       } else {
         const stripeContent = stripeFile!.buffer.toString("utf-8");
         const stripeResult = Papa.parse<StripeRow>(stripeContent, { header: true, skipEmptyLines: true });
