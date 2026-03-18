@@ -407,9 +407,9 @@ export default function UploadPage() {
                       <strong>Momence:</strong> Analytics → Total Sales → CSV
                     </li>
                     <li>
-                      <strong>Stripe:</strong> Payments → Itemized payout → CSV
+                      <strong>Stripe:</strong> Upload een CSV (Payments → Itemized payout) of gebruik de API-koppeling
                     </li>
-                    <li>Upload beide bestanden hierboven</li>
+                    <li>Upload de bestanden hierboven en start de reconciliatie</li>
                   </ol>
                 </div>
               </div>
