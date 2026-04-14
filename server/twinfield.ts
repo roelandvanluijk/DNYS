@@ -43,10 +43,14 @@ function escapeXml(str: string): string {
 }
 
 function debitLine(id: number, account: string, amount: number, desc: string): string {
-  return `    <line type="detail" id="${id}">
+  return `    <line id="${id}">
       <dim1>${escapeXml(account)}</dim1>
-      <value>${amount.toFixed(2)}</value>
+      <dim2/>
+      <dim3/>
       <debitcredit>debit</debitcredit>
+      <value>${amount.toFixed(2)}</value>
+      <basevalue>${amount.toFixed(2)}</basevalue>
+      <rate>1</rate>
       <description>${escapeXml(desc)}</description>
     </line>`;
 }
@@ -55,10 +59,14 @@ function creditLine(id: number, account: string, netto: number, btw: number, vat
   const vatLines = vatcode !== "VVR" && btw > 0
     ? `\n      <vatcode>${vatcode}</vatcode>\n      <vatvalue>${btw.toFixed(2)}</vatvalue>`
     : "";
-  return `    <line type="detail" id="${id}">
+  return `    <line id="${id}">
       <dim1>${escapeXml(account)}</dim1>
-      <value>${netto.toFixed(2)}</value>
+      <dim2/>
+      <dim3/>
       <debitcredit>credit</debitcredit>
+      <value>${netto.toFixed(2)}</value>
+      <basevalue>${netto.toFixed(2)}</basevalue>
+      <rate>1</rate>
       <description>${escapeXml(desc)}</description>${vatLines}
     </line>`;
 }
@@ -73,19 +81,22 @@ interface TransactionHeader {
   freetext2: string;
 }
 
-function buildTransaction(header: TransactionHeader, lines: string[], number: number): string {
-  return `  <transaction action="post">
+function buildTransaction(header: TransactionHeader, lines: string[]): string {
+  return `  <transaction destiny="final">
     <header>
       <office>${escapeXml(header.office)}</office>
       <code>${escapeXml(header.code)}</code>
-      <number>${number}</number>
+      <number>0</number>
       <period>${header.period}</period>
+      <currency>EUR</currency>
       <date>${header.date}</date>
       <description>${escapeXml(header.description)}</description>
       <freetext1>${escapeXml(header.freetext1)}</freetext1>
       <freetext2>${escapeXml(header.freetext2)}</freetext2>
     </header>
+    <lines>
 ${lines.join("\n")}
+    </lines>
   </transaction>`;
 }
 
@@ -114,12 +125,6 @@ export function generateTwinfieldXml(input: TwinfieldExportInput): string {
   );
 
   const transactions: string[] = [];
-
-  // Derive a unique base number from the period (e.g. "2026/01" → 202601)
-  // Each transaction gets periodBase * 100 + index → 20260101, 20260102, 20260103
-  // Deterministic per period — prevents accidental double-posting on re-export.
-  const periodBase = parseInt(period.replace("/", ""));
-  let txIndex = 1;
 
   // ── Transaction 1: Revenue booking ──────────────────────────────────────────
   // Momence Sale value is gross (BTW-inclusive, Dutch B2C prices).
@@ -164,7 +169,7 @@ export function generateTwinfieldXml(input: TwinfieldExportInput): string {
       description: `Momence omzet ${label}`,
       freetext1: `Reconciliatie ${session.period}`,
       freetext2: sessionRef,
-    }, revLines, periodBase * 100 + txIndex++));
+    }, revLines));
   }
 
   // ── Transaction 2: Accrual releases ─────────────────────────────────────────
@@ -199,7 +204,7 @@ export function generateTwinfieldXml(input: TwinfieldExportInput): string {
       description: `Accrual vrijval ${label}`,
       freetext1: `Reconciliatie ${session.period}`,
       freetext2: sessionRef,
-    }, relLines, periodBase * 100 + txIndex++));
+    }, relLines));
   }
 
   // ── Transaction 3: Stripe fees ───────────────────────────────────────────────
@@ -217,7 +222,7 @@ export function generateTwinfieldXml(input: TwinfieldExportInput): string {
       }, [
         debitLine(1, stripeFeeAccount, stripeFees, `Stripe transactiekosten ${label}`),
         creditLine(2, stripeAccount, stripeFees, 0, "VVR", `Stripe transactiekosten ${label}`),
-      ], periodBase * 100 + txIndex++));
+      ]));
     }
   }
 
