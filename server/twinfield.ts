@@ -73,12 +73,12 @@ interface TransactionHeader {
   freetext2: string;
 }
 
-function buildTransaction(header: TransactionHeader, lines: string[]): string {
+function buildTransaction(header: TransactionHeader, lines: string[], number: number): string {
   return `  <transaction action="post">
     <header>
       <office>${escapeXml(header.office)}</office>
       <code>${escapeXml(header.code)}</code>
-      <number>0</number>
+      <number>${number}</number>
       <period>${header.period}</period>
       <date>${header.date}</date>
       <description>${escapeXml(header.description)}</description>
@@ -114,6 +114,12 @@ export function generateTwinfieldXml(input: TwinfieldExportInput): string {
   );
 
   const transactions: string[] = [];
+
+  // Derive a unique base number from the period (e.g. "2026/01" → 202601)
+  // Each transaction gets periodBase * 100 + index → 20260101, 20260102, 20260103
+  // Deterministic per period — prevents accidental double-posting on re-export.
+  const periodBase = parseInt(period.replace("/", ""));
+  let txIndex = 1;
 
   // ── Transaction 1: Revenue booking ──────────────────────────────────────────
   // Momence Sale value is gross (BTW-inclusive, Dutch B2C prices).
@@ -158,7 +164,7 @@ export function generateTwinfieldXml(input: TwinfieldExportInput): string {
       description: `Momence omzet ${label}`,
       freetext1: `Reconciliatie ${session.period}`,
       freetext2: sessionRef,
-    }, revLines));
+    }, revLines, periodBase * 100 + txIndex++));
   }
 
   // ── Transaction 2: Accrual releases ─────────────────────────────────────────
@@ -193,7 +199,7 @@ export function generateTwinfieldXml(input: TwinfieldExportInput): string {
       description: `Accrual vrijval ${label}`,
       freetext1: `Reconciliatie ${session.period}`,
       freetext2: sessionRef,
-    }, relLines));
+    }, relLines, periodBase * 100 + txIndex++));
   }
 
   // ── Transaction 3: Stripe fees ───────────────────────────────────────────────
@@ -211,7 +217,7 @@ export function generateTwinfieldXml(input: TwinfieldExportInput): string {
       }, [
         debitLine(1, stripeFeeAccount, stripeFees, `Stripe transactiekosten ${label}`),
         creditLine(2, stripeAccount, stripeFees, 0, "VVR", `Stripe transactiekosten ${label}`),
-      ]));
+      ], periodBase * 100 + txIndex++));
     }
   }
 
