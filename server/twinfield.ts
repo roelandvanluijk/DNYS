@@ -74,10 +74,11 @@ interface TransactionHeader {
 }
 
 function buildTransaction(header: TransactionHeader, lines: string[]): string {
-  return `  <transaction>
+  return `  <transaction action="post">
     <header>
       <office>${escapeXml(header.office)}</office>
       <code>${escapeXml(header.code)}</code>
+      <number>0</number>
       <period>${header.period}</period>
       <date>${header.date}</date>
       <description>${escapeXml(header.description)}</description>
