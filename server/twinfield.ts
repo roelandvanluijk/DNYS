@@ -82,7 +82,7 @@ interface TransactionHeader {
 }
 
 function buildTransaction(header: TransactionHeader, lines: string[]): string {
-  return `  <transaction destiny="final">
+  return `  <transaction destiny="temporary">
     <header>
       <office>${escapeXml(header.office)}</office>
       <code>${escapeXml(header.code)}</code>
