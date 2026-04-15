@@ -1515,15 +1515,26 @@ export async function registerRoutes(
         return res.status(404).json({ error: "Sessie niet gevonden" });
       }
 
-      const [generalSettings, paymentMethodSettings, accrualReleases] = await Promise.all([
+      const [generalSettings, paymentMethodSettings, accrualReleases, categorySettings] = await Promise.all([
         storage.getGeneralSettings(),
         storage.getAllPaymentMethodSettings(),
         storage.getAccrualEntriesByPeriod(result.session.period),
+        storage.getCategorySettings(),
       ]);
+
+      // Override twinfieldAccount on each category with the current settings value,
+      // so changes made in Settings are reflected in exports of existing sessions.
+      const catAccountLookup = new Map(
+        (categorySettings ?? []).map(s => [s.name.toLowerCase(), s.twinfieldAccount])
+      );
+      const categoriesWithCurrentAccounts = result.categories.map(cat => ({
+        ...cat,
+        twinfieldAccount: catAccountLookup.get(cat.category.toLowerCase()) ?? cat.twinfieldAccount,
+      }));
 
       const xml = generateTwinfieldXml({
         session: result.session,
-        categories: result.categories,
+        categories: categoriesWithCurrentAccounts,
         paymentMethods: result.paymentMethods,
         accrualReleases,
         generalSettings,
