@@ -202,28 +202,38 @@ export function generateTwinfieldXml(input: TwinfieldExportInput): string {
   // BTW was already booked in full at time of sale in transaction 1.
 
   if (accrualReleases.length > 0) {
-    // All vrijval credits go to a single revenue release account (4098).
-    // Keep per-category lines so each can carry its own cost center (dim2).
-    const VRIJVAL_ACCOUNT = "4098";
-    const byCategory = new Map<string, { category: string; total: number }>();
+    // Vrijval releases go back to the original revenue account for each category,
+    // not to a central catch-all account. Build a lookup from the categories array
+    // (which already has current settings applied) so we use up-to-date accounts.
+    const catRevenueAccountLookup = new Map(
+      categories.map(cat => [cat.category.toLowerCase(), cat.twinfieldAccount || ""])
+    );
+
+    // Group by (category, account) — each unique combo gets its own credit line.
+    const byAccount = new Map<string, { category: string; account: string; total: number }>();
     for (const entry of accrualReleases) {
       const amount = round2(entry.bookingAmount ?? 0);
-      const existing = byCategory.get(entry.category);
+      // Prefer current category settings → fall back to stored account on entry
+      const account = catRevenueAccountLookup.get(entry.category.toLowerCase())
+        || entry.twinfieldAccount
+        || "4098";
+      const key = `${entry.category}::${account}`;
+      const existing = byAccount.get(key);
       if (existing) {
         existing.total = round2(existing.total + amount);
       } else {
-        byCategory.set(entry.category, { category: entry.category, total: amount });
+        byAccount.set(key, { category: entry.category, account, total: amount });
       }
     }
 
-    const totalRelease = round2(Array.from(byCategory.values()).reduce((s, r) => s + r.total, 0));
+    const totalRelease = round2(Array.from(byAccount.values()).reduce((s, r) => s + r.total, 0));
     const relLines: string[] = [];
     let rId = 1;
 
     relLines.push(debitLine(rId++, accrualCrossAccount, totalRelease, `Vrijval uitgestelde omzet ${label}`));
-    for (const rel of Array.from(byCategory.values())) {
-      const dim2 = costCenter(VRIJVAL_ACCOUNT, rel.category);
-      relLines.push(creditLine(rId++, VRIJVAL_ACCOUNT, round2(rel.total), 0, "VVR", `${rel.category} vrijval ${label}`, dim2));
+    for (const rel of Array.from(byAccount.values())) {
+      const dim2 = costCenter(rel.account, rel.category);
+      relLines.push(creditLine(rId++, rel.account, round2(rel.total), 0, "VVR", `${rel.category} vrijval ${label}`, dim2));
     }
 
     transactions.push(buildTransaction({
