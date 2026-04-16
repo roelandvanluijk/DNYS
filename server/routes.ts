@@ -1535,6 +1535,22 @@ export async function registerRoutes(
           cat.twinfieldAccount,
       }));
 
+      // Diagnostic: log any payment methods that will be skipped (no configured account)
+      const pmSettingsLookup = new Map(
+        paymentMethodSettings.map(pm => [pm.methodName.toLowerCase(), pm.twinfieldAccount ?? ""])
+      );
+      const skippedPMs = result.paymentMethods.filter(pm => {
+        const gross = Math.round((pm.totalAmount ?? 0) * 100) / 100;
+        if (gross === 0) return false;
+        const acct = pmSettingsLookup.get(pm.paymentMethod.toLowerCase());
+        return !acct;
+      });
+      if (skippedPMs.length > 0) {
+        console.warn("[twinfield-export] Skipped payment methods (no account configured):",
+          skippedPMs.map(pm => `${pm.paymentMethod}=€${(pm.totalAmount ?? 0).toFixed(2)}`).join(", ")
+        );
+      }
+
       const xml = generateTwinfieldXml({
         session: result.session,
         categories: categoriesWithCurrentAccounts,
