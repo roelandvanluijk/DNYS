@@ -16,7 +16,7 @@ import type {
 } from "@shared/schema";
 import { productSettings, pendingReconciliations, accrualSchedule, categorySettings as categorySettingsTable, paymentMethodSettings, generalSettings as generalSettingsTable, DEFAULT_GENERAL_SETTINGS, reconciliationSessions, customerComparison as customerComparisonTable, paymentMethodSummary as paymentMethodSummaryTable, categorySummary as categorySummaryTable, stripeCache } from "@shared/schema";
 import { db } from "./db";
-import { eq, desc, and } from "drizzle-orm";
+import { eq, desc, and, inArray } from "drizzle-orm";
 import type { InsertCategorySettings, CategorySettingsDB, InsertPaymentMethodSettings, PaymentMethodSettingsDB, TwinfieldGeneralSettings } from "@shared/schema";
 
 export interface CategorySettings {
@@ -291,7 +291,28 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getAccrualEntriesByPeriod(bookingMonth: string): Promise<AccrualEntry[]> {
-    return await db.select().from(accrualSchedule).where(eq(accrualSchedule.bookingMonth, bookingMonth));
+    // Only use entries from the most recent session per source period.
+    // Multiple sessions for the same period (e.g. re-uploads) each write their own
+    // accrual entries — without this filter the vrijval would be multiplied.
+    const allSessions = await db
+      .select({ id: reconciliationSessions.id, period: reconciliationSessions.period })
+      .from(reconciliationSessions)
+      .orderBy(desc(reconciliationSessions.createdAt));
+
+    const latestByPeriod = new Map<string, string>();
+    for (const s of allSessions) {
+      if (!latestByPeriod.has(s.period)) latestByPeriod.set(s.period, s.id);
+    }
+    const latestIds = Array.from(latestByPeriod.values());
+    if (latestIds.length === 0) return [];
+
+    return await db
+      .select()
+      .from(accrualSchedule)
+      .where(and(
+        eq(accrualSchedule.bookingMonth, bookingMonth),
+        inArray(accrualSchedule.sessionId, latestIds),
+      ));
   }
 
   async getGeneralSettings(): Promise<TwinfieldGeneralSettings> {

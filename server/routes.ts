@@ -1576,8 +1576,20 @@ export async function registerRoutes(
 
   app.get("/api/products", async (req, res) => {
     try {
-      const products = await storage.getAllProducts();
-      res.json(products);
+      const [products, categorySettings] = await Promise.all([
+        storage.getAllProducts(),
+        storage.getCategorySettings(),
+      ]);
+      // Overlay current category account so products page shows the effective ledger number,
+      // not the stale product-level value that may have been set before settings were updated.
+      const catAccountLookup = new Map(
+        (categorySettings ?? []).map(s => [s.name.toLowerCase(), s.twinfieldAccount])
+      );
+      const enriched = products.map(p => ({
+        ...p,
+        twinfieldAccount: catAccountLookup.get(p.category.toLowerCase()) ?? p.twinfieldAccount,
+      }));
+      res.json(enriched);
     } catch (error) {
       console.error("Get products error:", error);
       res.status(500).json({ error: "Kon producten niet ophalen" });
