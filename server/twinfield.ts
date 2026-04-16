@@ -236,7 +236,7 @@ export function generateTwinfieldXml(input: TwinfieldExportInput): string {
         freetext1: `Reconciliatie ${session.period}`,
         freetext2: sessionRef,
       }, [
-        debitLine(1, stripeFeeAccount, stripeFees, `Stripe transactiekosten ${label}`, costCenter(stripeFeeAccount)),
+        debitLine(1, stripeFeeAccount, stripeFees, `Stripe transactiekosten ${label}`, "KPL0000"),
         creditLine(2, stripeAccount, stripeFees, 0, "VVR", `Stripe transactiekosten ${label}`),
       ]));
     }
