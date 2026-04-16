@@ -33,6 +33,16 @@ function monthLabel(period: string): string {
   return `${names[parseInt(month) - 1]} ${year}`;
 }
 
+// Momence sometimes exports duplicated payment method names like "iDEAL, iDEAL" or "Card, Card".
+// Normalize these to the base name before lookup.
+function normalizePmName(name: string): string {
+  const parts = name.split(", ");
+  if (parts.length > 1 && parts.every(p => p.toLowerCase() === parts[0].toLowerCase())) {
+    return parts[0];
+  }
+  return name;
+}
+
 function escapeXml(str: string): string {
   return str
     .replace(/&/g, "&amp;")
@@ -153,9 +163,10 @@ export function generateTwinfieldXml(input: TwinfieldExportInput): string {
   for (const pm of paymentMethods) {
     const gross = round2(pm.totalAmount ?? 0);
     if (gross === 0) continue;
-    const pmCfg = pmLookup.get(pm.paymentMethod.toLowerCase());
+    const pmName = normalizePmName(pm.paymentMethod);
+    const pmCfg = pmLookup.get(pmName.toLowerCase());
     if (!pmCfg?.twinfieldAccount) continue;
-    revLines.push(debitLine(lineId++, pmCfg.twinfieldAccount, gross, `${pm.paymentMethod} ${label}`));
+    revLines.push(debitLine(lineId++, pmCfg.twinfieldAccount, gross, `${pmName} ${label}`));
   }
 
   // Credit lines: categories
