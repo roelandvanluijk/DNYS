@@ -335,6 +335,13 @@ export const REVENUE_CATEGORIES: Record<string, CategoryConfigWithSpecial> = {
     group: 'yoga',
     priority: 7,
   },
+  'Workshops & Events': {
+    keywords: [],
+    btwRate: 0.09,
+    twinfieldAccount: '4073',
+    group: 'yoga',
+    priority: 8,
+  },
   'Abonnementen': {
     keywords: [
       'membership', 'unlimited', 'abonnement', 'lidmaatschap', 'doorlopend',

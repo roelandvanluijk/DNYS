@@ -1529,7 +1529,10 @@ export async function registerRoutes(
       );
       const categoriesWithCurrentAccounts = result.categories.map(cat => ({
         ...cat,
-        twinfieldAccount: catAccountLookup.get(cat.category.toLowerCase()) ?? cat.twinfieldAccount,
+        twinfieldAccount:
+          catAccountLookup.get(cat.category.toLowerCase()) ??
+          REVENUE_CATEGORIES[cat.category as keyof typeof REVENUE_CATEGORIES]?.twinfieldAccount ??
+          cat.twinfieldAccount,
       }));
 
       const xml = generateTwinfieldXml({

@@ -42,10 +42,21 @@ function escapeXml(str: string): string {
     .replace(/'/g, "&apos;");
 }
 
-function debitLine(id: number, account: string, amount: number, desc: string): string {
+// Cost center (dim2) rules for this administration:
+// - All P&L accounts in the 4xxx range require a cost center
+// - Teacher Training uses KPL0001 (separate cost center)
+// - Everything else in 4xxx uses KPL0000
+// - Accounts outside 4xxx (balance sheet, etc.) leave dim2 empty
+function costCenter(account: string, categoryName?: string): string {
+  if (!account.startsWith("4")) return "";
+  return categoryName === "Teacher Training" ? "KPL0001" : "KPL0000";
+}
+
+function debitLine(id: number, account: string, amount: number, desc: string, dim2 = ""): string {
+  const dim2Tag = dim2 ? `<dim2>${escapeXml(dim2)}</dim2>` : `<dim2/>`;
   return `    <line id="${id}">
       <dim1>${escapeXml(account)}</dim1>
-      <dim2/>
+      ${dim2Tag}
       <dim3/>
       <debitcredit>debit</debitcredit>
       <value>${amount.toFixed(2)}</value>
@@ -55,13 +66,14 @@ function debitLine(id: number, account: string, amount: number, desc: string): s
     </line>`;
 }
 
-function creditLine(id: number, account: string, netto: number, btw: number, vatcode: string, desc: string): string {
+function creditLine(id: number, account: string, netto: number, btw: number, vatcode: string, desc: string, dim2 = ""): string {
+  const dim2Tag = dim2 ? `<dim2>${escapeXml(dim2)}</dim2>` : `<dim2/>`;
   const vatLines = vatcode !== "VVR" && btw > 0
     ? `\n      <vatcode>${vatcode}</vatcode>\n      <vatvalue>${btw.toFixed(2)}</vatvalue>`
     : "";
   return `    <line id="${id}">
       <dim1>${escapeXml(account)}</dim1>
-      <dim2/>
+      ${dim2Tag}
       <dim3/>
       <debitcredit>credit</debitcredit>
       <value>${netto.toFixed(2)}</value>
@@ -160,7 +172,9 @@ export function generateTwinfieldXml(input: TwinfieldExportInput): string {
     const desc = isDeferred
       ? `${cat.category} uitgesteld ${label}`
       : `${cat.category} ${label}`;
-    revLines.push(creditLine(lineId++, account, netto, btw, code, desc));
+    // Deferred categories park in the cross account (1809, balance sheet) — no cost center needed
+    const dim2 = isDeferred ? "" : costCenter(account, cat.category);
+    revLines.push(creditLine(lineId++, account, netto, btw, code, desc, dim2));
   }
 
   if (revLines.length >= 2) {
@@ -177,26 +191,28 @@ export function generateTwinfieldXml(input: TwinfieldExportInput): string {
   // BTW was already booked in full at time of sale in transaction 1.
 
   if (accrualReleases.length > 0) {
-    // Group releases by twinfield account
-    const byAccount = new Map<string, { account: string; category: string; total: number }>();
+    // All vrijval credits go to a single revenue release account (4098).
+    // Keep per-category lines so each can carry its own cost center (dim2).
+    const VRIJVAL_ACCOUNT = "4098";
+    const byCategory = new Map<string, { category: string; total: number }>();
     for (const entry of accrualReleases) {
-      const account = entry.twinfieldAccount || "8999";
       const amount = round2(entry.bookingAmount ?? 0);
-      const existing = byAccount.get(account);
+      const existing = byCategory.get(entry.category);
       if (existing) {
         existing.total = round2(existing.total + amount);
       } else {
-        byAccount.set(account, { account, category: entry.category, total: amount });
+        byCategory.set(entry.category, { category: entry.category, total: amount });
       }
     }
 
-    const totalRelease = round2(Array.from(byAccount.values()).reduce((s, r) => s + r.total, 0));
+    const totalRelease = round2(Array.from(byCategory.values()).reduce((s, r) => s + r.total, 0));
     const relLines: string[] = [];
     let rId = 1;
 
     relLines.push(debitLine(rId++, accrualCrossAccount, totalRelease, `Vrijval uitgestelde omzet ${label}`));
-    for (const rel of Array.from(byAccount.values())) {
-      relLines.push(creditLine(rId++, rel.account, round2(rel.total), 0, "VVR", `${rel.category} vrijval ${label}`));
+    for (const rel of Array.from(byCategory.values())) {
+      const dim2 = costCenter(VRIJVAL_ACCOUNT, rel.category);
+      relLines.push(creditLine(rId++, VRIJVAL_ACCOUNT, round2(rel.total), 0, "VVR", `${rel.category} vrijval ${label}`, dim2));
     }
 
     transactions.push(buildTransaction({
@@ -220,7 +236,7 @@ export function generateTwinfieldXml(input: TwinfieldExportInput): string {
         freetext1: `Reconciliatie ${session.period}`,
         freetext2: sessionRef,
       }, [
-        debitLine(1, stripeFeeAccount, stripeFees, `Stripe transactiekosten ${label}`),
+        debitLine(1, stripeFeeAccount, stripeFees, `Stripe transactiekosten ${label}`, costCenter(stripeFeeAccount)),
         creditLine(2, stripeAccount, stripeFees, 0, "VVR", `Stripe transactiekosten ${label}`),
       ]));
     }
