@@ -44,6 +44,11 @@ function normalizePmName(name: string): string {
   return name;
 }
 
+// Twinfield enforces a 40-character limit on all description fields.
+function trunc(s: string, max = 40): string {
+  return s.length <= max ? s : s.slice(0, max);
+}
+
 function escapeXml(str: string): string {
   return str
     .replace(/&/g, "&amp;")
@@ -73,7 +78,7 @@ function debitLine(id: number, account: string, amount: number, desc: string, di
       <value>${amount.toFixed(2)}</value>
       <basevalue>${amount.toFixed(2)}</basevalue>
       <rate>1</rate>
-      <description>${escapeXml(desc)}</description>
+      <description>${escapeXml(trunc(desc))}</description>
     </line>`;
 }
 
@@ -90,7 +95,7 @@ function creditLine(id: number, account: string, netto: number, btw: number, vat
       <value>${netto.toFixed(2)}</value>
       <basevalue>${netto.toFixed(2)}</basevalue>
       <rate>1</rate>
-      <description>${escapeXml(desc)}</description>${vatLines}
+      <description>${escapeXml(trunc(desc))}</description>${vatLines}
     </line>`;
 }
 
@@ -113,7 +118,7 @@ function buildTransaction(header: TransactionHeader, lines: string[]): string {
       <period>${header.period}</period>
       <currency>EUR</currency>
       <date>${header.date}</date>
-      <description>${escapeXml(header.description)}</description>
+      <description>${escapeXml(trunc(header.description))}</description>
       <freetext1>${escapeXml(header.freetext1)}</freetext1>
       <freetext2>${escapeXml(header.freetext2)}</freetext2>
     </header>
@@ -231,7 +236,7 @@ export function generateTwinfieldXml(input: TwinfieldExportInput): string {
 
     const account = cat.twinfieldAccount || "8999";
     const dim2 = costCenter(account, cat.category);
-    defLines.push(debitLine(dId++, account, unearned, `${cat.category} uitgesteld ${label}`, dim2));
+    defLines.push(debitLine(dId++, account, unearned, `${cat.category} uitgest. ${label}`, dim2));
     totalUnearned = round2(totalUnearned + unearned);
   }
 
