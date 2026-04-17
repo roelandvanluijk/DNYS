@@ -1,7 +1,8 @@
 import type { CategorySummary, AccrualEntry, PaymentMethodSummary, ReconciliationSession, TwinfieldGeneralSettings } from "@shared/schema";
 
-// These categories defer revenue at point of sale — full amount parks in the cross account (1809)
-// and is released month-by-month via the accrual_schedule
+// These categories defer revenue — the unearned portion (future months) parks in the cross
+// account (1809) via a deferral memo and is released month-by-month via the accrual_schedule.
+// BTW is always booked in full at point of sale, never deferred.
 const DEFERRED_CATEGORIES = new Set(["Opleidingen", "Teacher Training", "Jaarabonnementen"]);
 
 function round2(n: number): number {
@@ -126,7 +127,9 @@ export interface TwinfieldExportInput {
   session: ReconciliationSession;
   categories: Omit<CategorySummary, "items">[];
   paymentMethods: PaymentMethodSummary[];
-  // Accrual entries from ALL sessions where bookingMonth = session.period (releases for this period)
+  // Accrual entries from ALL sessions where bookingMonth = session.period (releases for this period).
+  // The current session's own entries are filtered out when building the vrijval transaction —
+  // those amounts are already on the revenue account (never deposited into 1809).
   accrualReleases: AccrualEntry[];
   generalSettings: TwinfieldGeneralSettings;
   paymentMethodSettings: { methodName: string; twinfieldAccount: string; isStripeMethod: boolean }[];
@@ -151,8 +154,10 @@ export function generateTwinfieldXml(input: TwinfieldExportInput): string {
   // ── Transaction 1: Revenue booking ──────────────────────────────────────────
   // Momence Sale value is gross (BTW-inclusive, Dutch B2C prices).
   // Debit:  payment method accounts (gross = what customers paid)
-  // Credit: regular categories → revenue accounts (netto + BTW via vatcode/vatvalue)
-  //         deferred categories → cross account 1809 (netto + BTW)
+  // Credit: ALL categories → their actual revenue accounts (netto + BTW via vatcode/vatvalue)
+  //
+  // BTW is always booked in the period of sale/payment receipt, regardless of
+  // whether the revenue is deferred. No BTW codes appear on balance sheet accounts.
   //
   // Twinfield balance: debit gross = Σ(credit netto + credit vatvalue) ✓
 
@@ -169,7 +174,7 @@ export function generateTwinfieldXml(input: TwinfieldExportInput): string {
     revLines.push(debitLine(lineId++, pmCfg.twinfieldAccount, gross, `${pmName} ${label}`));
   }
 
-  // Credit lines: categories
+  // Credit lines: all categories go to their actual revenue accounts with BTW
   for (const cat of categories) {
     const gross = round2(cat.totalAmount ?? 0);
     if (gross === 0) continue;
@@ -178,14 +183,9 @@ export function generateTwinfieldXml(input: TwinfieldExportInput): string {
     const netto = round2(gross / (1 + rate));
     const btw = round2(gross - netto);
     const code = btwCode(rate);
-    const isDeferred = DEFERRED_CATEGORIES.has(cat.category);
-    const account = isDeferred ? accrualCrossAccount : (cat.twinfieldAccount || "8999");
-    const desc = isDeferred
-      ? `${cat.category} uitgesteld ${label}`
-      : `${cat.category} ${label}`;
-    // Deferred categories park in the cross account (1809, balance sheet) — no cost center needed
-    const dim2 = isDeferred ? "" : costCenter(account, cat.category);
-    revLines.push(creditLine(lineId++, account, netto, btw, code, desc, dim2));
+    const account = cat.twinfieldAccount || "8999";
+    const dim2 = costCenter(account, cat.category);
+    revLines.push(creditLine(lineId++, account, netto, btw, code, `${cat.category} ${label}`, dim2));
   }
 
   if (revLines.length >= 2) {
@@ -197,23 +197,72 @@ export function generateTwinfieldXml(input: TwinfieldExportInput): string {
     }, revLines));
   }
 
-  // ── Transaction 2: Accrual releases ─────────────────────────────────────────
-  // Debit 1809 (releases from cross account) → Credit revenue accounts (netto only, no BTW)
-  // BTW was already booked in full at time of sale in transaction 1.
+  // ── Transaction 2: Deferral memo ────────────────────────────────────────────
+  // Parks the unearned netto of deferred categories into the cross account (1809).
+  // The earned-this-period portion stays on the revenue account from Transaction 1.
+  // BTW was already booked in full in Transaction 1 — only netto moves here.
+  //
+  // Debit:  revenue accounts (unearned netto per deferred category)
+  // Credit: 1809 (total unearned netto — no BTW on balance sheet accounts)
 
-  if (accrualReleases.length > 0) {
-    // Vrijval releases go back to the original revenue account for each category,
-    // not to a central catch-all account. Build a lookup from the categories array
-    // (which already has current settings applied) so we use up-to-date accounts.
+  const defLines: string[] = [];
+  let dId = 1;
+  let totalUnearned = 0;
+
+  for (const cat of categories) {
+    if (!DEFERRED_CATEGORIES.has(cat.category)) continue;
+    const gross = round2(cat.totalAmount ?? 0);
+    if (gross === 0) continue;
+    const rate = cat.btwRate ?? 0.09;
+    const totalNetto = round2(gross / (1 + rate));
+
+    // Earned this period = this session's accrual entry for the current booking month
+    const earnedThisPeriod = round2(
+      accrualReleases
+        .filter(e => e.sessionId === session.id && e.category.toLowerCase() === cat.category.toLowerCase())
+        .reduce((sum, e) => sum + (e.bookingAmount ?? 0), 0)
+    );
+
+    const unearned = round2(totalNetto - earnedThisPeriod);
+    if (unearned <= 0) continue;
+
+    const account = cat.twinfieldAccount || "8999";
+    const dim2 = costCenter(account, cat.category);
+    defLines.push(debitLine(dId++, account, unearned, `${cat.category} uitgesteld ${label}`, dim2));
+    totalUnearned = round2(totalUnearned + unearned);
+  }
+
+  if (defLines.length > 0) {
+    // Single credit to 1809 — no BTW on balance sheet accounts
+    defLines.push(creditLine(dId++, accrualCrossAccount, totalUnearned, 0, "VVR", `Uitgestelde omzet ${label}`));
+    transactions.push(buildTransaction({
+      office, code: journalCode, period, date,
+      description: `Uitgestelde omzet ${label}`,
+      freetext1: `Reconciliatie ${session.period}`,
+      freetext2: sessionRef,
+    }, defLines));
+  }
+
+  // ── Transaction 3: Accrual releases (vrijval) ────────────────────────────────
+  // Releases accrual entries from PREVIOUS sessions that fall due in this period.
+  // The current session's own earned-this-period amounts are already on the revenue
+  // account from Transaction 1 — they were never deposited into 1809.
+  //
+  // Debit 1809 → Credit revenue accounts (netto only, no BTW)
+  // BTW was booked in full at the time of original sale.
+
+  const releasesFromOtherSessions = accrualReleases.filter(e => e.sessionId !== session.id);
+
+  if (releasesFromOtherSessions.length > 0) {
+    // Build a lookup from current category settings so we use up-to-date accounts.
     const catRevenueAccountLookup = new Map(
       categories.map(cat => [cat.category.toLowerCase(), cat.twinfieldAccount || ""])
     );
 
     // Group by (category, account) — each unique combo gets its own credit line.
     const byAccount = new Map<string, { category: string; account: string; total: number }>();
-    for (const entry of accrualReleases) {
+    for (const entry of releasesFromOtherSessions) {
       const amount = round2(entry.bookingAmount ?? 0);
-      // Prefer current category settings → fall back to stored account on entry
       const account = catRevenueAccountLookup.get(entry.category.toLowerCase())
         || entry.twinfieldAccount
         || "4098";
@@ -244,7 +293,7 @@ export function generateTwinfieldXml(input: TwinfieldExportInput): string {
     }, relLines));
   }
 
-  // ── Transaction 3: Stripe fees ───────────────────────────────────────────────
+  // ── Transaction 4: Stripe fees ───────────────────────────────────────────────
   // Debit fee expense account → Credit Stripe receivables account
   const stripeFees = round2(session.stripeFees ?? 0);
   if (stripeFees > 0 && stripeFeeAccount) {
