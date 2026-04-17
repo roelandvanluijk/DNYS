@@ -1515,11 +1515,12 @@ export async function registerRoutes(
         return res.status(404).json({ error: "Sessie niet gevonden" });
       }
 
-      const [generalSettings, paymentMethodSettings, accrualReleases, categorySettings] = await Promise.all([
+      const [generalSettings, paymentMethodSettings, accrualReleases, categorySettings, currentSessionAccruals] = await Promise.all([
         storage.getGeneralSettings(),
         storage.getAllPaymentMethodSettings(),
         storage.getAccrualEntriesByPeriod(result.session.period),
         storage.getCategorySettings(),
+        storage.getAccrualEntries(result.session.id),
       ]);
 
       // Override twinfieldAccount on each category with the current settings value,
@@ -1556,6 +1557,7 @@ export async function registerRoutes(
         categories: categoriesWithCurrentAccounts,
         paymentMethods: result.paymentMethods,
         accrualReleases,
+        currentSessionAccruals,
         generalSettings,
         paymentMethodSettings: paymentMethodSettings.map(pm => ({
           methodName: pm.methodName,

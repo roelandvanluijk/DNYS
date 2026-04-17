@@ -131,12 +131,15 @@ export interface TwinfieldExportInput {
   // The current session's own entries are filtered out when building the vrijval transaction —
   // those amounts are already on the revenue account (never deposited into 1809).
   accrualReleases: AccrualEntry[];
+  // All accrual entries from the current session (every future booking month).
+  // Used to generate pre-posted forward-dated release memos so 1809 self-balances.
+  currentSessionAccruals: AccrualEntry[];
   generalSettings: TwinfieldGeneralSettings;
   paymentMethodSettings: { methodName: string; twinfieldAccount: string; isStripeMethod: boolean }[];
 }
 
 export function generateTwinfieldXml(input: TwinfieldExportInput): string {
-  const { session, categories, paymentMethods, accrualReleases, generalSettings, paymentMethodSettings } = input;
+  const { session, categories, paymentMethods, accrualReleases, currentSessionAccruals, generalSettings, paymentMethodSettings } = input;
   const { office, journalCode, accrualCrossAccount, stripeFeeAccount } = generalSettings;
 
   const period = twinfieldPeriod(session.period);
@@ -243,29 +246,79 @@ export function generateTwinfieldXml(input: TwinfieldExportInput): string {
     }, defLines));
   }
 
-  // ── Transaction 3: Accrual releases (vrijval) ────────────────────────────────
-  // Releases accrual entries from PREVIOUS sessions that fall due in this period.
-  // The current session's own earned-this-period amounts are already on the revenue
-  // account from Transaction 1 — they were never deposited into 1809.
+  // Shared account lookup — overrides stale stored accounts with current category settings.
+  const catRevenueAccountLookup = new Map(
+    categories.map(cat => [cat.category.toLowerCase(), cat.twinfieldAccount || ""])
+  );
+  function resolveAccount(category: string, storedAccount: string): string {
+    return catRevenueAccountLookup.get(category.toLowerCase()) || storedAccount || "4098";
+  }
+
+  // ── Transactions 3…N: Future period release memos ────────────────────────────
+  // One transaction per future bookingMonth from the current session's accrual schedule,
+  // each tagged with its own <period> and last-day <date>.
+  // Mirrors Twinfield's OMZETVERDELING pattern: all releases are pre-posted upfront
+  // so 1809 self-balances across every period without manual intervention.
   //
   // Debit 1809 → Credit revenue accounts (netto only, no BTW)
-  // BTW was booked in full at the time of original sale.
+
+  const futureEntries = currentSessionAccruals.filter(e => e.bookingMonth !== session.period);
+
+  const byMonth = new Map<string, Map<string, { category: string; account: string; total: number }>>();
+  for (const entry of futureEntries) {
+    const amount = round2(entry.bookingAmount ?? 0);
+    if (amount === 0) continue;
+    const account = resolveAccount(entry.category, entry.twinfieldAccount ?? "");
+    if (!byMonth.has(entry.bookingMonth)) byMonth.set(entry.bookingMonth, new Map());
+    const monthMap = byMonth.get(entry.bookingMonth)!;
+    const key = `${entry.category}::${account}`;
+    const existing = monthMap.get(key);
+    if (existing) {
+      existing.total = round2(existing.total + amount);
+    } else {
+      monthMap.set(key, { category: entry.category, account, total: amount });
+    }
+  }
+
+  for (const bookingMonth of Array.from(byMonth.keys()).sort()) {
+    const entries = Array.from(byMonth.get(bookingMonth)!.values());
+    const totalRelease = round2(entries.reduce((s, r) => s + r.total, 0));
+    if (totalRelease === 0) continue;
+
+    const futureLabel = monthLabel(bookingMonth);
+    const futureLines: string[] = [];
+    let fId = 1;
+
+    futureLines.push(debitLine(fId++, accrualCrossAccount, totalRelease, `Vrijval uitgestelde omzet ${futureLabel}`));
+    for (const rel of entries) {
+      const dim2 = costCenter(rel.account, rel.category);
+      futureLines.push(creditLine(fId++, rel.account, rel.total, 0, "VVR", `${rel.category} vrijval ${futureLabel}`, dim2));
+    }
+
+    transactions.push(buildTransaction({
+      office, code: journalCode,
+      period: twinfieldPeriod(bookingMonth),
+      date: lastDayOfMonth(bookingMonth),
+      description: `Vrijval uitgestelde omzet ${futureLabel}`,
+      freetext1: `Reconciliatie ${session.period}`,
+      freetext2: sessionRef,
+    }, futureLines));
+  }
+
+  // ── Transaction N+1: Accrual releases from prior sessions ────────────────────
+  // Releases entries from PREVIOUS sessions that fall due in this period.
+  // (The current session's own earned-this-period amounts are already on the revenue
+  // account from Transaction 1 — they were never deposited into 1809.)
+  //
+  // Debit 1809 → Credit revenue accounts (netto only, no BTW)
 
   const releasesFromOtherSessions = accrualReleases.filter(e => e.sessionId !== session.id);
 
   if (releasesFromOtherSessions.length > 0) {
-    // Build a lookup from current category settings so we use up-to-date accounts.
-    const catRevenueAccountLookup = new Map(
-      categories.map(cat => [cat.category.toLowerCase(), cat.twinfieldAccount || ""])
-    );
-
-    // Group by (category, account) — each unique combo gets its own credit line.
     const byAccount = new Map<string, { category: string; account: string; total: number }>();
     for (const entry of releasesFromOtherSessions) {
       const amount = round2(entry.bookingAmount ?? 0);
-      const account = catRevenueAccountLookup.get(entry.category.toLowerCase())
-        || entry.twinfieldAccount
-        || "4098";
+      const account = resolveAccount(entry.category, entry.twinfieldAccount ?? "");
       const key = `${entry.category}::${account}`;
       const existing = byAccount.get(key);
       if (existing) {
