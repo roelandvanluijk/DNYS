@@ -1410,18 +1410,19 @@ export async function registerRoutes(
   app.get("/api/settings/categories", async (req, res) => {
     try {
       const customCategories = await storage.getCategorySettings();
-      if (customCategories) {
-        res.json(customCategories);
-      } else {
-        const defaultCategories = Object.entries(REVENUE_CATEGORIES).map(([name, config]) => ({
+      const savedNames = new Set(customCategories?.map(c => c.name) ?? []);
+      const base = customCategories ?? [];
+      // Append any REVENUE_CATEGORIES entries not yet in the DB (e.g. newly added defaults)
+      const missing = Object.entries(REVENUE_CATEGORIES)
+        .filter(([name]) => !savedNames.has(name))
+        .map(([name, config]) => ({
           name,
           keywords: config.keywords,
           btwRate: config.btwRate,
           twinfieldAccount: config.twinfieldAccount,
           group: config.group,
         }));
-        res.json(defaultCategories);
-      }
+      res.json([...base, ...missing]);
     } catch (error) {
       console.error("Get categories error:", error);
       res.status(500).json({ error: "Kon categorieën niet ophalen" });
