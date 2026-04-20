@@ -873,9 +873,24 @@ export async function registerRoutes(
 
   app.get("/api/sessions/:sessionId", async (req, res) => {
     try {
-      const result = await storage.getFullResult(req.params.sessionId);
+      const [result, categorySettings] = await Promise.all([
+        storage.getFullResult(req.params.sessionId),
+        storage.getCategorySettings(),
+      ]);
       if (!result) {
         return res.status(404).json({ error: "Sessie niet gevonden" });
+      }
+      // Override stored twinfieldAccount with current settings value
+      if (categorySettings && result.categories) {
+        const catAccountLookup = new Map(
+          categorySettings.map(s => [s.name.toLowerCase(), s.twinfieldAccount])
+        );
+        result.categories = result.categories.map(cat => ({
+          ...cat,
+          twinfieldAccount:
+            catAccountLookup.get(cat.category?.toLowerCase() ?? "") ??
+            cat.twinfieldAccount,
+        }));
       }
       res.json(result);
     } catch (error) {
