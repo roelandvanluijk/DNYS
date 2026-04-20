@@ -1109,7 +1109,19 @@ export async function registerRoutes(
         return res.status(404).json({ error: "Sessie niet gevonden" });
       }
 
-      const { session, comparisons, paymentMethods, categories } = result;
+      const categorySettings = await storage.getCategorySettings();
+      const catAccountLookup = new Map(
+        (categorySettings ?? []).map(s => [s.name.toLowerCase(), s.twinfieldAccount])
+      );
+      const categories = result.categories.map(cat => ({
+        ...cat,
+        twinfieldAccount:
+          catAccountLookup.get(cat.category.toLowerCase()) ??
+          REVENUE_CATEGORIES[cat.category as keyof typeof REVENUE_CATEGORIES]?.twinfieldAccount ??
+          cat.twinfieldAccount,
+      }));
+
+      const { session, comparisons, paymentMethods } = result;
 
       const workbook = new ExcelJS.Workbook();
       workbook.creator = "DNYS Reconciliatie Tool";
