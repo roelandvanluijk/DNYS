@@ -243,27 +243,27 @@ const CUSTOMER_COLUMNS: ColumnConfig[] = [
 ];
 
 function NoteCell({ comparison }: { comparison: CustomerComparison }) {
-  const queryClient = useQueryClient();
   const { toast } = useToast();
   const [editing, setEditing] = useState(false);
+  const [savedNote, setSavedNote] = useState(comparison.note ?? "");
   const [draft, setDraft] = useState(comparison.note ?? "");
-  const inputRef = useRef<HTMLTextAreaElement>(null);
 
   const noteMutation = useMutation({
     mutationFn: async (note: string | null) =>
       apiRequest("PATCH", `/api/comparisons/${comparison.id}/note`, { note }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: [`/api/sessions/${comparison.sessionId}`] });
+    onSuccess: (_, note) => {
+      setSavedNote(note ?? "");
     },
     onError: () => {
       toast({ title: "Fout", description: "Opmerking kon niet worden opgeslagen.", variant: "destructive" });
+      setDraft(savedNote);
     },
   });
 
   const save = () => {
     setEditing(false);
     const trimmed = draft.trim() || null;
-    if (trimmed !== (comparison.note ?? null)) {
+    if (trimmed !== (savedNote || null)) {
       noteMutation.mutate(trimmed);
     }
   };
@@ -271,14 +271,16 @@ function NoteCell({ comparison }: { comparison: CustomerComparison }) {
   if (editing) {
     return (
       <textarea
-        ref={inputRef}
         autoFocus
         className="w-full min-w-[160px] text-xs border rounded px-2 py-1 resize-none focus:outline-none focus:ring-1 focus:ring-ring"
         rows={2}
         value={draft}
         onChange={(e) => setDraft(e.target.value)}
         onBlur={save}
-        onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); save(); } if (e.key === "Escape") { setDraft(comparison.note ?? ""); setEditing(false); } }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); save(); }
+          if (e.key === "Escape") { setDraft(savedNote); setEditing(false); }
+        }}
       />
     );
   }
@@ -286,10 +288,10 @@ function NoteCell({ comparison }: { comparison: CustomerComparison }) {
   return (
     <div
       className="min-w-[120px] max-w-[200px] text-xs text-muted-foreground cursor-pointer hover:text-foreground hover:bg-muted/50 rounded px-1 py-0.5 min-h-[24px] truncate"
-      title={comparison.note ?? "Klik om opmerking toe te voegen"}
-      onClick={() => { setDraft(comparison.note ?? ""); setEditing(true); }}
+      title={savedNote || "Klik om opmerking toe te voegen"}
+      onClick={() => { setDraft(savedNote); setEditing(true); }}
     >
-      {comparison.note || <span className="italic opacity-40">opmerking…</span>}
+      {savedNote || <span className="italic opacity-40">opmerking…</span>}
     </div>
   );
 }
