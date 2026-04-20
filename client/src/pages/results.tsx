@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useParams, useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -222,7 +222,7 @@ function RevenueCategoryTable({ categories, title }: RevenueCategoryTableProps) 
   );
 }
 
-type ColumnKey = "email" | "items" | "date" | "count" | "momence" | "stripe" | "difference" | "status";
+type ColumnKey = "email" | "items" | "date" | "count" | "momence" | "stripe" | "difference" | "status" | "note";
 
 interface ColumnConfig {
   key: ColumnKey;
@@ -239,14 +239,67 @@ const CUSTOMER_COLUMNS: ColumnConfig[] = [
   { key: "stripe", label: "Stripe", defaultVisible: true },
   { key: "difference", label: "Verschil", defaultVisible: true },
   { key: "status", label: "Status", defaultVisible: true },
+  { key: "note", label: "Opmerking", defaultVisible: true },
 ];
 
-function CustomerTable({ 
-  comparisons, 
+function NoteCell({ comparison }: { comparison: CustomerComparison }) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(comparison.note ?? "");
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  const noteMutation = useMutation({
+    mutationFn: async (note: string | null) =>
+      apiRequest("PATCH", `/api/comparisons/${comparison.id}/note`, { note }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [`/api/sessions/${comparison.sessionId}`] });
+    },
+    onError: () => {
+      toast({ title: "Fout", description: "Opmerking kon niet worden opgeslagen.", variant: "destructive" });
+    },
+  });
+
+  const save = () => {
+    setEditing(false);
+    const trimmed = draft.trim() || null;
+    if (trimmed !== (comparison.note ?? null)) {
+      noteMutation.mutate(trimmed);
+    }
+  };
+
+  if (editing) {
+    return (
+      <textarea
+        ref={inputRef}
+        autoFocus
+        className="w-full min-w-[160px] text-xs border rounded px-2 py-1 resize-none focus:outline-none focus:ring-1 focus:ring-ring"
+        rows={2}
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={save}
+        onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); save(); } if (e.key === "Escape") { setDraft(comparison.note ?? ""); setEditing(false); } }}
+      />
+    );
+  }
+
+  return (
+    <div
+      className="min-w-[120px] max-w-[200px] text-xs text-muted-foreground cursor-pointer hover:text-foreground hover:bg-muted/50 rounded px-1 py-0.5 min-h-[24px] truncate"
+      title={comparison.note ?? "Klik om opmerking toe te voegen"}
+      onClick={() => { setDraft(comparison.note ?? ""); setEditing(true); }}
+    >
+      {comparison.note || <span className="italic opacity-40">opmerking…</span>}
+    </div>
+  );
+}
+
+function CustomerTable({
+  comparisons,
   filter,
   visibleColumns,
-}: { 
-  comparisons: CustomerComparison[]; 
+}: {
+  comparisons: CustomerComparison[];
   filter: "all" | "matched" | "differences";
   visibleColumns: Set<ColumnKey>;
 }) {
@@ -278,6 +331,7 @@ function CustomerTable({
             {visibleColumns.has("stripe") && <TableHead className="text-right">Stripe</TableHead>}
             {visibleColumns.has("difference") && <TableHead className="text-right">Verschil</TableHead>}
             {visibleColumns.has("status") && <TableHead className="text-right">Status</TableHead>}
+            {visibleColumns.has("note") && <TableHead>Opmerking</TableHead>}
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -324,6 +378,11 @@ function CustomerTable({
               {visibleColumns.has("status") && (
                 <TableCell className="text-right">
                   {getStatusBadge(comparison.matchStatus || "unknown")}
+                </TableCell>
+              )}
+              {visibleColumns.has("note") && (
+                <TableCell>
+                  <NoteCell comparison={comparison} />
                 </TableCell>
               )}
             </TableRow>

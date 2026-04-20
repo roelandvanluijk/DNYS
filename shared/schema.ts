@@ -184,6 +184,7 @@ export const customerComparison = pgTable("customer_comparison", {
   items: text("items"),
   transactionDate: text("transaction_date"),
   transactionCount: integer("transaction_count").default(0),
+  note: text("note"),
 });
 
 export const paymentMethodSummary = pgTable("payment_method_summary", {
@@ -405,6 +406,27 @@ export const REVENUE_CATEGORIES: Record<string, CategoryConfigWithSpecial> = {
     twinfieldAccount: '8120',
     group: 'yoga',
     priority: 12,
+  },
+  'Kortingscode': {
+    keywords: ['kortingscode', 'discount code', 'coupon', 'promo code', 'korting'],
+    btwRate: 0.00,
+    twinfieldAccount: '8950',
+    group: 'yoga',
+    priority: 13,
+  },
+  'Coaching': {
+    keywords: ['coaching', 'coach', '1-op-1', 'one-on-one', 'privé les', 'prive les'],
+    btwRate: 0.21,
+    twinfieldAccount: '8600',
+    group: 'yoga',
+    priority: 14,
+  },
+  'Donatie': {
+    keywords: ['donatie', 'donation', 'gift', 'schenking'],
+    btwRate: 0.00,
+    twinfieldAccount: '8700',
+    group: 'yoga',
+    priority: 15,
   },
   'Overig': {
     keywords: [],

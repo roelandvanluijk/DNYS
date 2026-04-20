@@ -563,6 +563,7 @@ async function processReconciliation(
     items: string;
     transactionDate: string;
     transactionCount: number;
+    note: null;
   }> = [];
 
   let matchedCount = 0;
@@ -610,6 +611,7 @@ async function processReconciliation(
       items: customerItems ? Array.from(customerItems).join(", ") : "",
       transactionDate: customerDates ? Array.from(customerDates).join(", ") : "",
       transactionCount: customerCount,
+      note: null,
     });
   }
 
@@ -959,6 +961,19 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Delete session error:", error);
       res.status(500).json({ error: "Kon sessie niet verwijderen" });
+    }
+  });
+
+  app.patch("/api/comparisons/:id/note", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id, 10);
+      if (isNaN(id)) return res.status(400).json({ error: "Ongeldig ID" });
+      const { note } = req.body as { note?: string | null };
+      await storage.updateComparisonNote(id, note ?? null);
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Update comparison note error:", error);
+      res.status(500).json({ error: "Kon opmerking niet opslaan" });
     }
   });
 

@@ -81,6 +81,8 @@ export interface IStorage {
 
   getStripeCache(period: string): Promise<{ data: string; transactionCount: number; fetchedAt: Date | null } | undefined>;
   saveStripeCache(period: string, data: string, transactionCount: number): Promise<void>;
+
+  updateComparisonNote(id: number, note: string | null): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -349,6 +351,12 @@ export class DatabaseStorage implements IStorage {
   async saveStripeCache(period: string, data: string, transactionCount: number): Promise<void> {
     await db.delete(stripeCache).where(eq(stripeCache.period, period));
     await db.insert(stripeCache).values({ period, data, transactionCount });
+  }
+
+  async updateComparisonNote(id: number, note: string | null): Promise<void> {
+    await db.update(customerComparisonTable)
+      .set({ note })
+      .where(eq(customerComparisonTable.id, id));
   }
 }
 
