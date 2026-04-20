@@ -132,19 +132,16 @@ export interface TwinfieldExportInput {
   session: ReconciliationSession;
   categories: Omit<CategorySummary, "items">[];
   paymentMethods: PaymentMethodSummary[];
-  // Accrual entries from ALL sessions where bookingMonth = session.period (releases for this period).
-  // The current session's own entries are filtered out when building the vrijval transaction —
-  // those amounts are already on the revenue account (never deposited into 1809).
-  accrualReleases: AccrualEntry[];
-  // All accrual entries from the current session (every future booking month).
-  // Used to generate pre-posted forward-dated release memos so 1809 self-balances.
+  // All accrual entries from the current session (every booking month ≠ current period).
+  // Used to both derive the 1809 credit amount and generate pre-posted forward-dated release memos.
+  // Credit 1809 = sum of these entries → 1809 closes within every XML export.
   currentSessionAccruals: AccrualEntry[];
   generalSettings: TwinfieldGeneralSettings;
   paymentMethodSettings: { methodName: string; twinfieldAccount: string; isStripeMethod: boolean }[];
 }
 
 export function generateTwinfieldXml(input: TwinfieldExportInput): string {
-  const { session, categories, paymentMethods, accrualReleases, currentSessionAccruals, generalSettings, paymentMethodSettings } = input;
+  const { session, categories, paymentMethods, currentSessionAccruals, generalSettings, paymentMethodSettings } = input;
   const { office, journalCode, accrualCrossAccount, stripeFeeAccount } = generalSettings;
 
   const period = twinfieldPeriod(session.period);
@@ -205,43 +202,54 @@ export function generateTwinfieldXml(input: TwinfieldExportInput): string {
     }, revLines));
   }
 
+  // Shared account lookup — overrides stale stored accounts with current category settings.
+  const catRevenueAccountLookup = new Map(
+    categories.map(cat => [cat.category.toLowerCase(), cat.twinfieldAccount || ""])
+  );
+  function resolveAccount(category: string, storedAccount: string): string {
+    return catRevenueAccountLookup.get(category.toLowerCase()) || storedAccount || "4098";
+  }
+
+  // All current-session entries for months other than the current period.
+  // These become the pre-posted release memos (Transactions 3…N).
+  // We also derive Transaction 2's 1809 credit from these so that
+  // total credits to 1809 = total debits to 1809 within every XML export.
+  const futureEntries = currentSessionAccruals.filter(e => e.bookingMonth !== session.period);
+
   // ── Transaction 2: Deferral memo ────────────────────────────────────────────
   // Parks the unearned netto of deferred categories into the cross account (1809).
-  // The earned-this-period portion stays on the revenue account from Transaction 1.
   // BTW was already booked in full in Transaction 1 — only netto moves here.
   //
-  // Debit:  revenue accounts (unearned netto per deferred category)
-  // Credit: 1809 (total unearned netto — no BTW on balance sheet accounts)
+  // The credit to 1809 is derived directly from the sum of the pre-posted release
+  // entries (futureEntries), so 1809 always nets to zero within this XML export.
+  //
+  // Debit:  revenue accounts per deferred category (sum of future release amounts)
+  // Credit: 1809 (exact total of all future debit entries — cross account closes)
+
+  const unearnedByCat = new Map<string, { account: string; total: number }>();
+  for (const entry of futureEntries) {
+    if (!DEFERRED_CATEGORIES.has(entry.category)) continue;
+    const amount = round2(entry.bookingAmount ?? 0);
+    if (amount === 0) continue;
+    const account = resolveAccount(entry.category, entry.twinfieldAccount ?? "");
+    const existing = unearnedByCat.get(entry.category);
+    if (existing) {
+      existing.total = round2(existing.total + amount);
+    } else {
+      unearnedByCat.set(entry.category, { account, total: amount });
+    }
+  }
 
   const defLines: string[] = [];
   let dId = 1;
   let totalUnearned = 0;
 
-  for (const cat of categories) {
-    if (!DEFERRED_CATEGORIES.has(cat.category)) continue;
-    const gross = round2(cat.totalAmount ?? 0);
-    if (gross === 0) continue;
-    const rate = cat.btwRate ?? 0.09;
-    const totalNetto = round2(gross / (1 + rate));
-
-    // Earned this period = this session's accrual entry for the current booking month
-    const earnedThisPeriod = round2(
-      accrualReleases
-        .filter(e => e.sessionId === session.id && e.category.toLowerCase() === cat.category.toLowerCase())
-        .reduce((sum, e) => sum + (e.bookingAmount ?? 0), 0)
-    );
-
-    const unearned = round2(totalNetto - earnedThisPeriod);
-    if (unearned <= 0) continue;
-
-    const account = cat.twinfieldAccount || "8999";
-    const dim2 = costCenter(account, cat.category);
-    defLines.push(debitLine(dId++, account, unearned, `${cat.category} uitgest. ${label}`, dim2));
-    totalUnearned = round2(totalUnearned + unearned);
+  for (const [catName, data] of Array.from(unearnedByCat.entries())) {
+    defLines.push(debitLine(dId++, data.account, data.total, `${catName} uitgest. ${label}`, costCenter(data.account, catName)));
+    totalUnearned = round2(totalUnearned + data.total);
   }
 
   if (defLines.length > 0) {
-    // Single credit to 1809 — no BTW on balance sheet accounts
     defLines.push(creditLine(dId++, accrualCrossAccount, totalUnearned, 0, "VVR", `Uitgestelde omzet ${label}`));
     transactions.push(buildTransaction({
       office, code: journalCode, period, date,
@@ -251,14 +259,6 @@ export function generateTwinfieldXml(input: TwinfieldExportInput): string {
     }, defLines));
   }
 
-  // Shared account lookup — overrides stale stored accounts with current category settings.
-  const catRevenueAccountLookup = new Map(
-    categories.map(cat => [cat.category.toLowerCase(), cat.twinfieldAccount || ""])
-  );
-  function resolveAccount(category: string, storedAccount: string): string {
-    return catRevenueAccountLookup.get(category.toLowerCase()) || storedAccount || "4098";
-  }
-
   // ── Transactions 3…N: Future period release memos ────────────────────────────
   // One transaction per future bookingMonth from the current session's accrual schedule,
   // each tagged with its own <period> and last-day <date>.
@@ -266,8 +266,6 @@ export function generateTwinfieldXml(input: TwinfieldExportInput): string {
   // so 1809 self-balances across every period without manual intervention.
   //
   // Debit 1809 → Credit revenue accounts (netto only, no BTW)
-
-  const futureEntries = currentSessionAccruals.filter(e => e.bookingMonth !== session.period);
 
   const byMonth = new Map<string, Map<string, { category: string; account: string; total: number }>>();
   for (const entry of futureEntries) {
@@ -308,47 +306,6 @@ export function generateTwinfieldXml(input: TwinfieldExportInput): string {
       freetext1: `Reconciliatie ${session.period}`,
       freetext2: sessionRef,
     }, futureLines));
-  }
-
-  // ── Transaction N+1: Accrual releases from prior sessions ────────────────────
-  // Releases entries from PREVIOUS sessions that fall due in this period.
-  // (The current session's own earned-this-period amounts are already on the revenue
-  // account from Transaction 1 — they were never deposited into 1809.)
-  //
-  // Debit 1809 → Credit revenue accounts (netto only, no BTW)
-
-  const releasesFromOtherSessions = accrualReleases.filter(e => e.sessionId !== session.id);
-
-  if (releasesFromOtherSessions.length > 0) {
-    const byAccount = new Map<string, { category: string; account: string; total: number }>();
-    for (const entry of releasesFromOtherSessions) {
-      const amount = round2(entry.bookingAmount ?? 0);
-      const account = resolveAccount(entry.category, entry.twinfieldAccount ?? "");
-      const key = `${entry.category}::${account}`;
-      const existing = byAccount.get(key);
-      if (existing) {
-        existing.total = round2(existing.total + amount);
-      } else {
-        byAccount.set(key, { category: entry.category, account, total: amount });
-      }
-    }
-
-    const totalRelease = round2(Array.from(byAccount.values()).reduce((s, r) => s + r.total, 0));
-    const relLines: string[] = [];
-    let rId = 1;
-
-    relLines.push(debitLine(rId++, accrualCrossAccount, totalRelease, `Vrijval uitgestelde omzet ${label}`));
-    for (const rel of Array.from(byAccount.values())) {
-      const dim2 = costCenter(rel.account, rel.category);
-      relLines.push(creditLine(rId++, rel.account, round2(rel.total), 0, "VVR", `${rel.category} vrijval ${label}`, dim2));
-    }
-
-    transactions.push(buildTransaction({
-      office, code: journalCode, period, date,
-      description: `Accrual vrijval ${label}`,
-      freetext1: `Reconciliatie ${session.period}`,
-      freetext2: sessionRef,
-    }, relLines));
   }
 
   // ── Transaction 4: Stripe fees ───────────────────────────────────────────────

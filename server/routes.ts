@@ -1546,10 +1546,9 @@ export async function registerRoutes(
         return res.status(404).json({ error: "Sessie niet gevonden" });
       }
 
-      const [generalSettings, paymentMethodSettings, accrualReleases, categorySettings, currentSessionAccruals] = await Promise.all([
+      const [generalSettings, paymentMethodSettings, categorySettings, currentSessionAccruals] = await Promise.all([
         storage.getGeneralSettings(),
         storage.getAllPaymentMethodSettings(),
-        storage.getAccrualEntriesByPeriod(result.session.period),
         storage.getCategorySettings(),
         storage.getAccrualEntries(result.session.id),
       ]);
@@ -1587,7 +1586,6 @@ export async function registerRoutes(
         session: result.session,
         categories: categoriesWithCurrentAccounts,
         paymentMethods: result.paymentMethods,
-        accrualReleases,
         currentSessionAccruals,
         generalSettings,
         paymentMethodSettings: paymentMethodSettings.map(pm => ({
