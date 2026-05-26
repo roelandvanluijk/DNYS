@@ -128,6 +128,13 @@ ${lines.join("\n")}
   </transaction>`;
 }
 
+export interface TwinfieldImbalanceError extends Error {
+  code: 'TWINFIELD_IMBALANCE';
+  debitTotal: number;
+  creditTotal: number;
+  gap: number;
+}
+
 export interface TwinfieldExportInput {
   session: ReconciliationSession;
   categories: Omit<CategorySummary, "items">[];
@@ -138,10 +145,13 @@ export interface TwinfieldExportInput {
   currentSessionAccruals: AccrualEntry[];
   generalSettings: TwinfieldGeneralSettings;
   paymentMethodSettings: { methodName: string; twinfieldAccount: string; isStripeMethod: boolean }[];
+  // When true: add a sluitpost on 2999 (vraagpostengrootboek) to close any debit/credit gap.
+  // When false (default): throw TwinfieldImbalanceError if the revenue transaction doesn't balance.
+  forceBalance?: boolean;
 }
 
 export function generateTwinfieldXml(input: TwinfieldExportInput): string {
-  const { session, categories, paymentMethods, currentSessionAccruals, generalSettings, paymentMethodSettings } = input;
+  const { session, categories, paymentMethods, currentSessionAccruals, generalSettings, paymentMethodSettings, forceBalance } = input;
   const { office, journalCode, accrualCrossAccount, stripeFeeAccount } = generalSettings;
 
   const period = twinfieldPeriod(session.period);
@@ -168,6 +178,8 @@ export function generateTwinfieldXml(input: TwinfieldExportInput): string {
 
   const revLines: string[] = [];
   let lineId = 1;
+  let debitTotal = 0;
+  let creditTotal = 0;
 
   // Debit lines: payment methods
   for (const pm of paymentMethods) {
@@ -176,6 +188,7 @@ export function generateTwinfieldXml(input: TwinfieldExportInput): string {
     const pmName = normalizePmName(pm.paymentMethod);
     const pmCfg = pmLookup.get(pmName.toLowerCase());
     if (!pmCfg?.twinfieldAccount) continue;
+    debitTotal = round2(debitTotal + gross);
     revLines.push(debitLine(lineId++, pmCfg.twinfieldAccount, gross, `${pmName} ${label}`));
   }
 
@@ -190,7 +203,31 @@ export function generateTwinfieldXml(input: TwinfieldExportInput): string {
     const code = btwCode(rate);
     const account = cat.twinfieldAccount || "8999";
     const dim2 = costCenter(account, cat.category);
+    // Twinfield auto-posts vatvalue as a separate BTW line, so effective credit = netto + vatvalue = gross
+    creditTotal = round2(creditTotal + gross);
     revLines.push(creditLine(lineId++, account, netto, btw, code, `${cat.category} ${label}`, dim2));
+  }
+
+  // Balance validation: debitTotal must equal creditTotal (Twinfield processes netto + auto-BTW on each credit line)
+  const revGap = round2(creditTotal - debitTotal);
+  if (Math.abs(revGap) > 0.01) {
+    if (forceBalance) {
+      // Add sluitpost on 2999 (vraagpostengrootboek) so the booking imports
+      if (revGap > 0) {
+        revLines.push(debitLine(lineId++, "2999", revGap, `Sluitpost omzet ${label}`));
+      } else {
+        revLines.push(creditLine(lineId++, "2999", Math.abs(revGap), 0, "VVR", `Sluitpost omzet ${label}`));
+      }
+    } else {
+      const err = new Error(
+        `Revenue transaction is not in balance: debit=${debitTotal.toFixed(2)}, credit=${creditTotal.toFixed(2)}, gap=${revGap.toFixed(2)}`
+      ) as TwinfieldImbalanceError;
+      err.code = 'TWINFIELD_IMBALANCE';
+      err.debitTotal = debitTotal;
+      err.creditTotal = creditTotal;
+      err.gap = revGap;
+      throw err;
+    }
   }
 
   if (revLines.length >= 2) {

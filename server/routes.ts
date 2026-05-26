@@ -5,7 +5,7 @@ import Papa from "papaparse";
 import ExcelJS from "exceljs";
 import { storage, type NewProductSuggestion } from "./storage";
 import { STRIPE_PAYMENT_METHODS, REVENUE_CATEGORIES, type MatchStatus, type CategoryConfig, type ProductSettings, type InsertAccrualEntry } from "@shared/schema";
-import { generateTwinfieldXml } from "./twinfield";
+import { generateTwinfieldXml, type TwinfieldImbalanceError } from "./twinfield";
 
 // Emails to exclude from customer comparisons (studio's own email)
 const EXCLUDED_EMAILS = ["info@denieuweyogaschool.nl"];
@@ -1594,6 +1594,8 @@ export async function registerRoutes(
         );
       }
 
+      const forceBalance = req.query.forceBalance === 'true';
+
       const xml = generateTwinfieldXml({
         session: result.session,
         categories: categoriesWithCurrentAccounts,
@@ -1605,13 +1607,28 @@ export async function registerRoutes(
           twinfieldAccount: pm.twinfieldAccount ?? "",
           isStripeMethod: pm.isStripeMethod ?? false,
         })),
+        forceBalance,
       });
+
+      if (forceBalance) {
+        console.warn(`[twinfield-export] forceBalance=true for ${result.session.period}: sluitpost added on 2999`);
+      }
 
       const filename = `twinfield-${result.session.period}.xml`;
       res.setHeader("Content-Type", "application/xml; charset=utf-8");
       res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
       res.send(xml);
     } catch (error) {
+      if ((error as TwinfieldImbalanceError)?.code === 'TWINFIELD_IMBALANCE') {
+        const e = error as TwinfieldImbalanceError;
+        console.warn(`[twinfield-export] Imbalance: debit=${e.debitTotal.toFixed(2)}, credit=${e.creditTotal.toFixed(2)}, gap=${e.gap.toFixed(2)}`);
+        return res.status(422).json({
+          error: 'TWINFIELD_IMBALANCE',
+          debitTotal: e.debitTotal,
+          creditTotal: e.creditTotal,
+          gap: e.gap,
+        });
+      }
       console.error("Twinfield export error:", error);
       res.status(500).json({ error: "Kon Twinfield XML niet genereren" });
     }

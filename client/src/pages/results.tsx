@@ -476,6 +476,11 @@ export default function ResultsPage() {
     message: string;
     comparedPeriods?: string[];
   } | null>(null);
+  const [imbalanceData, setImbalanceData] = useState<{
+    debitTotal: number;
+    creditTotal: number;
+    gap: number;
+  } | null>(null);
   const [visibleColumns, setVisibleColumns] = useState<Set<ColumnKey>>(() => {
     const initial = new Set<ColumnKey>();
     CUSTOMER_COLUMNS.forEach(col => {
@@ -575,9 +580,37 @@ export default function ResultsPage() {
     window.open(`/api/sessions/${params.sessionId}/download`, "_blank");
   };
 
-  const handleDownloadXml = () => {
-    window.open(`/api/sessions/${params.sessionId}/export/twinfield`, "_blank");
+  const triggerXmlDownload = async (forceBalance = false) => {
+    const url = `/api/sessions/${params.sessionId}/export/twinfield${forceBalance ? '?forceBalance=true' : ''}`;
+    const response = await fetch(url, { credentials: 'include' });
+    if (response.ok) {
+      const blob = await response.blob();
+      const disposition = response.headers.get('Content-Disposition');
+      const match = disposition?.match(/filename="([^"]+)"/);
+      const filename = match?.[1] ?? `twinfield-${params.sessionId}.xml`;
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(blobUrl);
+      setImbalanceData(null);
+      return;
+    }
+    if (response.status === 422) {
+      const data = await response.json();
+      if (data.error === 'TWINFIELD_IMBALANCE') {
+        setImbalanceData({ debitTotal: data.debitTotal, creditTotal: data.creditTotal, gap: data.gap });
+        return;
+      }
+    }
+    toast({ title: "Fout", description: "Kon Twinfield XML niet genereren", variant: "destructive" });
   };
+
+  const handleDownloadXml = () => triggerXmlDownload(false);
+  const handleForceBalanceDownload = () => triggerXmlDownload(true);
 
   if (error) {
     return (
@@ -705,6 +738,50 @@ export default function ResultsPage() {
               <FileCode className="w-4 h-4 mr-2" />
               Twinfield XML
             </Button>
+
+            <AlertDialog open={imbalanceData !== null} onOpenChange={(open) => { if (!open) setImbalanceData(null); }}>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle className="flex items-center gap-2">
+                    <AlertTriangle className="w-5 h-5 text-destructive" />
+                    Boeking niet in balans
+                  </AlertDialogTitle>
+                  <AlertDialogDescription asChild>
+                    <div className="space-y-3 text-sm">
+                      <p>
+                        De omzetboeking klopt niet: het totaal aan ontvangen betalingen (debet) wijkt af van het
+                        totaal aan geboekte omzet (credit inclusief btw). Dit is een verschil in de Momence-data
+                        zelf — geen rekenfout in de XML.
+                      </p>
+                      <div className="font-mono bg-muted rounded p-3 space-y-1 text-xs">
+                        <div className="flex justify-between">
+                          <span>Debet (betalingen)</span>
+                          <span>{formatCurrency(imbalanceData?.debitTotal)}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>Credit (omzet incl. btw)</span>
+                          <span>{formatCurrency(imbalanceData?.creditTotal)}</span>
+                        </div>
+                        <div className="flex justify-between font-semibold border-t pt-1 mt-1">
+                          <span>Verschil</span>
+                          <span className="text-destructive">{formatCurrency(imbalanceData?.gap)}</span>
+                        </div>
+                      </div>
+                      <p>
+                        Je kunt de XML toch downloaden met een sluitpost op grootboekrekening 2999
+                        (vraagpostenrekening). Onderzoek daarna de oorzaak van het verschil in Momence.
+                      </p>
+                    </div>
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Annuleren</AlertDialogCancel>
+                  <AlertDialogAction onClick={handleForceBalanceDownload}>
+                    Download met sluitpost (2999)
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
             <Button onClick={handleDownload} disabled={isLoading} data-testid="button-download">
               <Download className="w-4 h-4 mr-2" />
               Download Excel
