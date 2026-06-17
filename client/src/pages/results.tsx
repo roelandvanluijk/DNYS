@@ -106,7 +106,10 @@ function RevenueCategoryTable({ categories, title }: RevenueCategoryTableProps) 
   if (categories.length === 0) return null;
 
   const total = categories.reduce((sum, c) => sum + (c.totalAmount ?? 0), 0);
-  const totalTax = categories.reduce((sum, c) => sum + ((c.totalAmount ?? 0) * (c.btwRate ?? 0.09)), 0);
+  const totalTax = categories.reduce((sum, c) => {
+    const rate = c.btwRate ?? 0.09;
+    return sum + (c.totalAmount ?? 0) * rate / (1 + rate);
+  }, 0);
 
   const toggleCategory = (id: number) => {
     setExpandedCategories(prev => {
@@ -139,7 +142,8 @@ function RevenueCategoryTable({ categories, title }: RevenueCategoryTableProps) 
           </TableHeader>
           <TableBody>
             {categories.map((cat) => {
-              const btwAmount = (cat.totalAmount ?? 0) * (cat.btwRate ?? 0.09);
+              const btwRate = cat.btwRate ?? 0.09;
+              const btwAmount = (cat.totalAmount ?? 0) * btwRate / (1 + btwRate);
               const isExpanded = expandedCategories.has(cat.id);
               const hasItems = cat.items && cat.items.length > 0;
               return (
@@ -651,10 +655,10 @@ export default function ResultsPage() {
   const totalRevenue = data?.categories.reduce((sum, c) => sum + (c.totalAmount ?? 0), 0) ?? 0;
   const totalBtw9 = data?.categories
     .filter(c => (c.btwRate ?? 0.09) === 0.09)
-    .reduce((sum, c) => sum + (c.totalAmount ?? 0) * 0.09, 0) ?? 0;
+    .reduce((sum, c) => sum + (c.totalAmount ?? 0) * 0.09 / 1.09, 0) ?? 0;
   const totalBtw21 = data?.categories
     .filter(c => (c.btwRate ?? 0) === 0.21)
-    .reduce((sum, c) => sum + (c.totalAmount ?? 0) * 0.21, 0) ?? 0;
+    .reduce((sum, c) => sum + (c.totalAmount ?? 0) * 0.21 / 1.21, 0) ?? 0;
   const totalBtw0 = data?.categories
     .filter(c => (c.btwRate ?? 0) === 0)
     .reduce((sum, c) => sum + (c.totalAmount ?? 0) * 0, 0) ?? 0;
