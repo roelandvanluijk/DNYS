@@ -118,6 +118,64 @@ export function debitLineWithVat(id: number, account: string, netto: number, btw
     </line>`;
 }
 
+export interface CorrectionMemoInput {
+  period: string; // "YYYY-MM"
+  grossTotal: number; // total gross (BTW-inclusive) sale value being reclassified for this month
+  singleClassesAccount: string; // current Single Classes twinfield account (from category_settings)
+  onlineAccount: string; // current Online/Livestream twinfield account (from category_settings)
+}
+
+const SINGLE_CLASS_BTW_RATE = 0.09;
+const ONLINE_BTW_RATE = 0.21;
+
+// Generates a one-time correction memo per affected month: reverses gross revenue that was
+// originally booked to Single Classes (9% BTW) and re-books it to Online/Livestream (21% BTW).
+// The customer paid the same gross amount either way — only the internal categorization was
+// wrong — so debit and credit always represent the same gross euro figure by construction.
+export function generateCorrectionMemoXml(
+  inputs: CorrectionMemoInput[],
+  generalSettings: TwinfieldGeneralSettings,
+): string {
+  const { office, journalCode } = generalSettings;
+  const transactions: string[] = [];
+
+  for (const input of inputs) {
+    const gross = round2(input.grossTotal);
+    if (gross === 0) continue;
+
+    const oldNetto = round2(gross / (1 + SINGLE_CLASS_BTW_RATE));
+    const oldBtw = round2(gross - oldNetto);
+    const newNetto = round2(gross / (1 + ONLINE_BTW_RATE));
+    const newBtw = round2(gross - newNetto);
+
+    const debitTotal = round2(oldNetto + oldBtw);
+    const creditTotal = round2(newNetto + newBtw);
+    if (Math.abs(debitTotal - creditTotal) > 0.01 || Math.abs(debitTotal - gross) > 0.01) {
+      throw new Error(
+        `Correction memo for ${input.period} does not balance: debit=${debitTotal}, credit=${creditTotal}, gross=${gross}`
+      );
+    }
+
+    const label = monthLabel(input.period);
+    const lines = [
+      debitLineWithVat(1, input.singleClassesAccount, oldNetto, oldBtw, "VL", `Correctie €9 online -> ${label}`),
+      creditLine(2, input.onlineAccount, newNetto, newBtw, "VH", `Correctie €9 online -> ${label}`),
+    ];
+
+    transactions.push(buildTransaction({
+      office,
+      code: journalCode,
+      period: twinfieldPeriod(input.period),
+      date: lastDayOfMonth(input.period),
+      description: `Correctie €9 losse lessen -> Online ${label}`,
+      freetext1: "€9 online single-class BTW correctie",
+      freetext2: input.period,
+    }, lines));
+  }
+
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<transactions>\n${transactions.join("\n")}\n</transactions>`;
+}
+
 interface TransactionHeader {
   office: string;
   code: string;
