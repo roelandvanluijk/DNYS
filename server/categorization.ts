@@ -175,3 +175,17 @@ export function applyOnlineSingleClassOverride(
   };
 }
 
+// checkForNewProducts aggregates by item name rather than per-row, so the €9
+// override there must be checked against the average sale value for that item
+// name, not an exact per-row match.
+export function resolveNewProductCategory(
+  result: CategoryResult,
+  totalAmount: number,
+  transactionCount: number,
+  customCategories: CustomCategoryConfig[] | null,
+): CategoryResult {
+  if (transactionCount === 0) return result;
+  const average = totalAmount / transactionCount;
+  return applyOnlineSingleClassOverride(result, average, customCategories);
+}
+

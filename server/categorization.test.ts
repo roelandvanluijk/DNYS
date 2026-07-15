@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { categorizeItemByKeywords, applyOnlineSingleClassOverride } from "./categorization";
+import { categorizeItemByKeywords, applyOnlineSingleClassOverride, resolveNewProductCategory } from "./categorization";
 
 const customCategories = null; // exercise the REVENUE_CATEGORIES default path
 
@@ -76,5 +76,22 @@ describe("applyOnlineSingleClassOverride", () => {
   it("throws if customCategories is loaded but Online/Livestream is missing from it", () => {
     const partialCategories = customCategories.filter(c => c.name !== "Online/Livestream");
     expect(() => applyOnlineSingleClassOverride(singleClassResult, 9.00, partialCategories)).toThrow(/Online\/Livestream/);
+  });
+});
+
+describe("resolveNewProductCategory", () => {
+  const base = { category: "Single Classes", btwRate: 0.09, twinfieldAccount: "4071", specialHandling: null };
+  const customCategories = [
+    { name: "Online/Livestream", keywords: ["livestream"], btwRate: 0.21, twinfieldAccount: "2015", group: "yoga" as const },
+  ];
+
+  it("suggests Online/Livestream when a new item's average price is exactly €9.00", () => {
+    const result = resolveNewProductCategory(base, 45, 5, customCategories); // 45 / 5 = 9.00
+    expect(result.category).toBe("Online/Livestream");
+  });
+
+  it("keeps Single Classes when the average isn't exactly €9.00", () => {
+    const result = resolveNewProductCategory(base, 46, 5, customCategories); // 9.20
+    expect(result.category).toBe("Single Classes");
   });
 });

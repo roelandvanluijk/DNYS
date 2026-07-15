@@ -11,6 +11,7 @@ import {
   categorizeItemFromProduct,
   categorizeItemCached,
   applyOnlineSingleClassOverride,
+  resolveNewProductCategory,
   type CategoryResult,
   type CustomCategoryConfig,
 } from "./categorization";
@@ -193,7 +194,8 @@ async function checkForNewProducts(
     const storedProduct = await storage.getProductByName(itemName);
     
     if (!storedProduct) {
-      const categorization = categorizeItemByKeywords(itemName, customCategories);
+      const rawCategorization = categorizeItemByKeywords(itemName, customCategories);
+      const categorization = resolveNewProductCategory(rawCategorization, stats.total, stats.count, customCategories);
       newProducts.push({
         itemName,
         suggestedCategory: categorization.category,
