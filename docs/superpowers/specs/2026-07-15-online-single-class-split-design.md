@@ -46,8 +46,17 @@ function applyOnlineSingleClassOverride(
   customCategories: CustomCategoryConfig[] | null,
 ): CategoryResult {
   if (result.category !== "Single Classes" || Math.round(saleValue * 100) !== 900) return result;
-  const online = customCategories?.find(c => c.name === "Online/Livestream")
-    ?? REVENUE_CATEGORIES["Online/Livestream"]; // fallback only if no custom settings loaded at all
+
+  // Only fall back to the hardcoded default when NO custom settings are loaded at all.
+  // If customCategories is non-null but missing "Online/Livestream" specifically, that's a data
+  // problem (partial category_settings edit) — fail loudly rather than silently booking to a
+  // stale/dead account.
+  if (customCategories === null) {
+    const fallback = REVENUE_CATEGORIES["Online/Livestream"];
+    return { category: "Online/Livestream", btwRate: fallback.btwRate, twinfieldAccount: fallback.twinfieldAccount, specialHandling: fallback.specialHandling ?? null };
+  }
+  const online = customCategories.find(c => c.name === "Online/Livestream");
+  if (!online) throw new Error("Online/Livestream category not configured in category_settings");
   return {
     category: "Online/Livestream",
     btwRate: online.btwRate,
