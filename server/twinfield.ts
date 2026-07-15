@@ -99,6 +99,23 @@ function creditLine(id: number, account: string, netto: number, btw: number, vat
     </line>`;
 }
 
+export function debitLineWithVat(id: number, account: string, netto: number, btw: number, vatcode: string, desc: string, dim2 = ""): string {
+  const dim2Tag = dim2 ? `<dim2>${escapeXml(dim2)}</dim2>` : `<dim2/>`;
+  const vatLines = vatcode !== "VVR" && btw > 0
+    ? `\n      <vatcode>${vatcode}</vatcode>\n      <vatvalue>${btw.toFixed(2)}</vatvalue>`
+    : "";
+  return `    <line id="${id}">
+      <dim1>${escapeXml(account)}</dim1>
+      ${dim2Tag}
+      <dim3/>
+      <debitcredit>debit</debitcredit>
+      <value>${netto.toFixed(2)}</value>
+      <basevalue>${netto.toFixed(2)}</basevalue>
+      <rate>1</rate>
+      <description>${escapeXml(trunc(desc))}</description>${vatLines}
+    </line>`;
+}
+
 interface TransactionHeader {
   office: string;
   code: string;
