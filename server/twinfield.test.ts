@@ -15,4 +15,16 @@ describe("debitLineWithVat", () => {
     const xml = debitLineWithVat(1, "4071", 10.00, 0, "VVR", "desc");
     expect(xml).not.toContain("<vatcode>");
   });
+
+  it("omits the vat line for VVR even when btw is nonzero", () => {
+    const xml = debitLineWithVat(1, "4071", 10.00, 5.00, "VVR", "desc");
+    expect(xml).not.toContain("<vatcode>");
+    expect(xml).not.toContain("<vatvalue>");
+  });
+
+  it("omits the vat line for a non-VVR vatcode when btw is exactly 0", () => {
+    const xml = debitLineWithVat(1, "4071", 10.00, 0, "VH", "desc");
+    expect(xml).not.toContain("<vatcode>");
+    expect(xml).not.toContain("<vatvalue>");
+  });
 });

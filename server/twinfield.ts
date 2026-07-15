@@ -82,11 +82,15 @@ function debitLine(id: number, account: string, amount: number, desc: string, di
     </line>`;
 }
 
-function creditLine(id: number, account: string, netto: number, btw: number, vatcode: string, desc: string, dim2 = ""): string {
-  const dim2Tag = dim2 ? `<dim2>${escapeXml(dim2)}</dim2>` : `<dim2/>`;
-  const vatLines = vatcode !== "VVR" && btw > 0
+function vatSuffix(vatcode: string, btw: number): string {
+  return vatcode !== "VVR" && btw > 0
     ? `\n      <vatcode>${vatcode}</vatcode>\n      <vatvalue>${btw.toFixed(2)}</vatvalue>`
     : "";
+}
+
+function creditLine(id: number, account: string, netto: number, btw: number, vatcode: string, desc: string, dim2 = ""): string {
+  const dim2Tag = dim2 ? `<dim2>${escapeXml(dim2)}</dim2>` : `<dim2/>`;
+  const vatLines = vatSuffix(vatcode, btw);
   return `    <line id="${id}">
       <dim1>${escapeXml(account)}</dim1>
       ${dim2Tag}
@@ -101,9 +105,7 @@ function creditLine(id: number, account: string, netto: number, btw: number, vat
 
 export function debitLineWithVat(id: number, account: string, netto: number, btw: number, vatcode: string, desc: string, dim2 = ""): string {
   const dim2Tag = dim2 ? `<dim2>${escapeXml(dim2)}</dim2>` : `<dim2/>`;
-  const vatLines = vatcode !== "VVR" && btw > 0
-    ? `\n      <vatcode>${vatcode}</vatcode>\n      <vatvalue>${btw.toFixed(2)}</vatvalue>`
-    : "";
+  const vatLines = vatSuffix(vatcode, btw);
   return `    <line id="${id}">
       <dim1>${escapeXml(account)}</dim1>
       ${dim2Tag}
