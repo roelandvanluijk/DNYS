@@ -16,7 +16,7 @@
 
 | File | Change | Responsibility |
 |---|---|---|
-| `server/categorization.ts` | **Create** | All categorization logic, extracted verbatim from `routes.ts` plus the new `applyOnlineSingleClassOverride` and a new `resolveNewProductCategory` helper. |
+| `server/categorization.ts` | **Create** | The DB-free categorization logic extracted from `routes.ts` (keyword matching, reviewed-product override, cached lookup — NOT the dead-code async `categorizeItem`, which stays in `routes.ts`), plus the new `applyOnlineSingleClassOverride` and `resolveNewProductCategory` helpers. |
 | `server/routes.ts` | **Modify** | Remove extracted functions; import from `./categorization`; wire the override into `processReconciliation`'s per-row loop and into `checkForNewProducts`. |
 | `server/categorization.test.ts` | **Create** | Vitest coverage for the extracted logic (regression safety net) and the new override/helper. |
 | `server/twinfield.ts` | **Modify** | Add `debitLineWithVat` helper and `generateCorrectionMemoXml` export. |
