@@ -175,16 +175,18 @@ async function checkForNewProducts(
   momenceData: MomenceRow[],
   customCategories: CustomCategoryConfig[] | null
 ): Promise<NewProductSuggestion[]> {
-  const itemStats = new Map<string, { count: number; total: number }>();
-  
+  const itemStats = new Map<string, { count: number; total: number; allExactNine: boolean }>();
+
   for (const row of momenceData) {
     const item = row.Item || "";
     if (!item) continue;
-    
+
     const saleValue = parseNumber(row["Sale value"]);
-    const current = itemStats.get(item) || { count: 0, total: 0 };
+    const isNine = Math.round(saleValue * 100) === 900;
+    const current = itemStats.get(item) || { count: 0, total: 0, allExactNine: true };
     current.count++;
     current.total += saleValue;
+    current.allExactNine = current.allExactNine && isNine;
     itemStats.set(item, current);
   }
   
@@ -195,7 +197,7 @@ async function checkForNewProducts(
     
     if (!storedProduct) {
       const rawCategorization = categorizeItemByKeywords(itemName, customCategories);
-      const categorization = resolveNewProductCategory(rawCategorization, stats.total, stats.count, customCategories);
+      const categorization = resolveNewProductCategory(rawCategorization, stats.allExactNine, customCategories);
       newProducts.push({
         itemName,
         suggestedCategory: categorization.category,

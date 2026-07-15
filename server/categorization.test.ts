@@ -85,13 +85,20 @@ describe("resolveNewProductCategory", () => {
     { name: "Online/Livestream", keywords: ["livestream"], btwRate: 0.21, twinfieldAccount: "2015", group: "yoga" as const },
   ];
 
-  it("suggests Online/Livestream when a new item's average price is exactly €9.00", () => {
-    const result = resolveNewProductCategory(base, 45, 5, customCategories); // 45 / 5 = 9.00
+  it("suggests Online/Livestream when every sale under this item name is exactly €9.00", () => {
+    const result = resolveNewProductCategory(base, true, customCategories);
     expect(result.category).toBe("Online/Livestream");
   });
 
-  it("keeps Single Classes when the average isn't exactly €9.00", () => {
-    const result = resolveNewProductCategory(base, 46, 5, customCategories); // 9.20
+  it("keeps Single Classes when not every sale under this item name is exactly €9.00", () => {
+    const result = resolveNewProductCategory(base, false, customCategories);
+    expect(result.category).toBe("Single Classes");
+  });
+
+  it("does not reclassify when not every sale under this item name is exactly €9, even if the average happens to be €9", () => {
+    // e.g. 4x €8.00 + 1x €13.00 = €45 total / 5 = €9.00 average, but no individual
+    // sale was ever actually €9 — allSalesExactlyNine correctly comes out false here.
+    const result = resolveNewProductCategory(base, false, customCategories);
     expect(result.category).toBe("Single Classes");
   });
 });

@@ -176,16 +176,16 @@ export function applyOnlineSingleClassOverride(
 }
 
 // checkForNewProducts aggregates by item name rather than per-row, so the €9
-// override there must be checked against the average sale value for that item
-// name, not an exact per-row match.
+// override there can only fire when EVERY row seen under that item name was
+// exactly €9.00 — checking the average would misclassify an item name whose
+// mixed-price rows merely happen to average to €9 (e.g. 4x €8 + 1x €13),
+// permanently baking a wrong category into product_settings if accepted.
 export function resolveNewProductCategory(
   result: CategoryResult,
-  totalAmount: number,
-  transactionCount: number,
+  allSalesExactlyNine: boolean,
   customCategories: CustomCategoryConfig[] | null,
 ): CategoryResult {
-  if (transactionCount === 0) return result;
-  const average = totalAmount / transactionCount;
-  return applyOnlineSingleClassOverride(result, average, customCategories);
+  if (!allSalesExactlyNine) return result;
+  return applyOnlineSingleClassOverride(result, 9.00, customCategories);
 }
 
