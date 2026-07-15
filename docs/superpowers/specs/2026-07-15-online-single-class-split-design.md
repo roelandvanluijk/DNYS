@@ -27,34 +27,51 @@ price point stays under "Single Classes". Match is exact €9.00, no tolerance r
 
 `server/routes.ts` categorizes items purely by keyword (`categorizeItemByKeywords`) or by a
 manually reviewed `product_settings` row (`categorizeItemFromProduct`) — neither is price-aware.
-Add a single override applied after category resolution in both `categorizeItem` and
-`categorizeItemCached`:
+
+Add a single override, applied **once**, as a wrapper around the existing
+`categorizeItemCached(...)` call inside `processReconciliation`'s per-row loop (routes.ts:391) —
+not inside `categorizeItem`/`categorizeItemCached` themselves, since that would require threading
+`saleValue` through both signatures and every call site for no benefit (the non-cached
+`categorizeItem` has no other caller in scope). The wrapper must resolve the Online/Livestream
+account/BTW rate from the **live `customCategories` (`category_settings`, already loaded in
+`processReconciliation` as `customCategories`)**, never from the hardcoded `REVENUE_CATEGORIES`
+defaults in `shared/schema.ts` — e.g. today's real "Single Classes" account is `4071` and
+"Online/Livestream" is `2015`, not the schema's `8120`/`8200`. Getting this wrong would book the
+correction to a dead/unused account:
 
 ```ts
-function applyOnlineSingleClassOverride(result: CategoryResult, saleValue: number): CategoryResult {
-  if (result.category === "Single Classes" && Math.round(saleValue * 100) === 900) {
-    const online = REVENUE_CATEGORIES["Online/Livestream"];
-    return {
-      category: "Online/Livestream",
-      btwRate: online.btwRate,
-      twinfieldAccount: online.twinfieldAccount,
-      specialHandling: online.specialHandling ?? null,
-    };
-  }
-  return result;
+function applyOnlineSingleClassOverride(
+  result: CategoryResult,
+  saleValue: number,
+  customCategories: CustomCategoryConfig[] | null,
+): CategoryResult {
+  if (result.category !== "Single Classes" || Math.round(saleValue * 100) !== 900) return result;
+  const online = customCategories?.find(c => c.name === "Online/Livestream")
+    ?? REVENUE_CATEGORIES["Online/Livestream"]; // fallback only if no custom settings loaded at all
+  return {
+    category: "Online/Livestream",
+    btwRate: online.btwRate,
+    twinfieldAccount: online.twinfieldAccount,
+    specialHandling: REVENUE_CATEGORIES["Online/Livestream"].specialHandling ?? null,
+  };
 }
 ```
 
-Applied in `processReconciliation`'s per-row loop, using the already-parsed `saleValue` for that
-row. This means the €9 rule applies regardless of whether the item was keyword-matched or is a
+This means the €9 rule applies regardless of whether the item was keyword-matched or is a
 manually reviewed product — a €9 sale always lands in Online/Livestream; anything else stays
 Single Classes.
 
-Note: at runtime, actual revenue accounts/BTW rates come from the `category_settings` table
-(current settings), not the literal defaults in `shared/schema.ts` — e.g. today "Single Classes"
-is account `4071` and "Online/Livestream" is `2015`, not `8120`/`8200`. The override must resolve
-against current `category_settings`, matching the project's existing pattern of always using
-live settings rather than stale/hardcoded values.
+**Also touches `checkForNewProducts` (routes.ts:297-334).** This suggests a category for
+not-yet-reviewed item names using `categorizeItemByKeywords` directly, bypassing the wrapper
+above. It aggregates `count`/`total` per item name (not per transaction), so apply the same
+€9 check against the per-item **average** (`stats.total / stats.count === 9.00` exactly) when
+suggesting a category — otherwise a brand-new €9 item name would be suggested as "Single Classes"
+to the reviewer instead of "Online/Livestream".
+
+**Refunds are explicitly out of scope.** `Refunded` is parsed into `MomenceRow` but is never read
+anywhere in the current codebase — no category or booking logic anywhere already handles refunds
+specially. This fix doesn't change that; a refunded €9 row is treated like any other row, exactly
+as every other category already is.
 
 ## 2. Historical analysis (Jan–May 2026)
 
@@ -78,19 +95,28 @@ months are being freshly re-exported from Momence (source of truth) for this ana
 ## 3. Correction memo (Twinfield XML)
 
 **Script:** `script/generate-correction-memo.ts`, reusing the analysis script's per-month
-figures. Adds a new exported function in `server/twinfield.ts` (additive only — does not modify
-the existing monthly export logic) producing one Twinfield transaction per affected month, dated
-with that month's actual period/last-day (not today):
+figures. Adds to `server/twinfield.ts` (additive only — does not modify the existing monthly
+export logic):
 
-- Debit Single Classes account, value = old netto, vatcode `VL` (9%), vatvalue = old BTW
-  (reverses the originally booked 9% revenue + BTW)
-- Credit Online/Livestream account, value = new netto, vatcode `VH` (21%), vatvalue = new BTW
-  (books the corrected 21% revenue + BTW)
+1. **A new `debitLineWithVat` helper.** The existing `debitLine` (twinfield.ts:71-83) has no
+   vatcode/vatvalue support — only `creditLine` (line 85) does. The correction memo needs a debit
+   line carrying `vatcode`/`vatvalue` too (to reverse the originally booked 9% BTW), so this is a
+   new helper mirroring `creditLine`'s vat-line construction, not a detail assumed away.
+2. **A new exported function** producing one Twinfield transaction per affected month, dated with
+   that month's actual period/last-day (not today):
+   - Debit Single Classes account (`debitLineWithVat`), value = old netto, vatcode `VL` (9%),
+     vatvalue = old BTW (reverses the originally booked 9% revenue + BTW)
+   - Credit Online/Livestream account (`creditLine`), value = new netto, vatcode `VH` (21%),
+     vatvalue = new BTW (books the corrected 21% revenue + BTW)
+   - An explicit balance check (own local `debitTotal`/`creditTotal`, not reused from
+     `generateTwinfieldXml` — those are function-scoped) asserting both sides equal the gross €9
+     total before the XML is written, mirroring the existing imbalance-guard pattern rather than
+     just asserting "self-balancing" in prose.
 
-Self-balancing (both sides net to the same €9 gross per transaction) — no clearing/sluitpost
-account needed. This mirrors Twinfield's standard vatcode-attached-to-a-line mechanism already
-used elsewhere in `server/twinfield.ts` (confirmed against actual Dutch BTW correction practice
-via the accountant agent).
+Self-balancing by construction (both sides net to the same €9 gross per transaction) — no
+clearing/sluitpost account needed. This mirrors Twinfield's standard vatcode-attached-to-a-line
+mechanism already used elsewhere in `server/twinfield.ts` (confirmed against actual Dutch BTW
+correction practice via the accountant agent).
 
 Writes one importable XML file per month to disk. You review and import into Twinfield manually,
 same as the existing monthly export flow — nothing is posted automatically.
