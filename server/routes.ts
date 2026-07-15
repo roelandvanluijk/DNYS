@@ -4,8 +4,15 @@ import multer from "multer";
 import Papa from "papaparse";
 import ExcelJS from "exceljs";
 import { storage, type NewProductSuggestion } from "./storage";
-import { STRIPE_PAYMENT_METHODS, REVENUE_CATEGORIES, type MatchStatus, type CategoryConfig, type ProductSettings, type InsertAccrualEntry } from "@shared/schema";
+import { STRIPE_PAYMENT_METHODS, REVENUE_CATEGORIES, type MatchStatus, type ProductSettings, type InsertAccrualEntry } from "@shared/schema";
 import { generateTwinfieldXml, type TwinfieldImbalanceError } from "./twinfield";
+import {
+  categorizeItemByKeywords,
+  categorizeItemFromProduct,
+  categorizeItemCached,
+  type CategoryResult,
+  type CustomCategoryConfig,
+} from "./categorization";
 
 // Emails to exclude from customer comparisons (studio's own email)
 const EXCLUDED_EMAILS = ["info@denieuweyogaschool.nl"];
@@ -146,120 +153,6 @@ function getMatchStatus(difference: number): MatchStatus {
   return "large_diff";
 }
 
-interface CategoryResult {
-  category: string;
-  btwRate: number;
-  twinfieldAccount: string;
-  specialHandling?: 'accrual' | 'spread_12' | null;
-}
-
-interface CustomCategoryConfig {
-  name: string;
-  keywords: string[];
-  btwRate: number;
-  twinfieldAccount: string;
-  group: "yoga" | "horeca";
-}
-
-function categorizeItemByKeywords(
-  itemName: string | undefined, 
-  customCategories: CustomCategoryConfig[] | null
-): CategoryResult {
-  if (!itemName) {
-    return { category: "Overig", btwRate: 0.09, twinfieldAccount: "8999" };
-  }
-  
-  const itemLower = itemName.toLowerCase();
-  
-  // Priority order for categories (Online/Livestream FIRST)
-  const categoryOrder = [
-    'Online/Livestream',
-    'Opleidingen',
-    'Teacher Training',
-    'Jaarabonnementen',
-    'Gift Cards',
-    'Money Credits',
-    'Workshops 9%',
-    'Workshops 21%',
-    'Abonnementen',
-    'Rittenkaarten',
-    'Omzet Keuken',
-    'Omzet Drank Laag',
-    'Omzet Drank Hoog',
-    'Single Classes',
-  ];
-  
-  // Check for gift card codes (alphanumeric 6-10 chars) - FIX 5: case-insensitive
-  if (/^[A-Za-z0-9]{6,10}$/.test(itemName.trim())) {
-    return { category: "Gift Cards", btwRate: 0.00, twinfieldAccount: "8900" };
-  }
-  
-  // Check for yearly membership with year/jaar keyword
-  if ((itemLower.includes('year') || itemLower.includes('jaar')) && 
-      (itemLower.includes('membership') || itemLower.includes('abonnement'))) {
-    return { category: "Jaarabonnementen", btwRate: 0.09, twinfieldAccount: "8101", specialHandling: 'spread_12' };
-  }
-  
-  // Use custom categories if available, otherwise use defaults
-  if (customCategories) {
-    for (const categoryName of categoryOrder) {
-      const config = customCategories.find(c => c.name === categoryName);
-      if (!config) continue;
-      
-      for (const keyword of config.keywords) {
-        if (itemLower.includes(keyword.toLowerCase())) {
-          if (categoryName === 'Rittenkaarten' && itemLower.includes('single')) {
-            continue;
-          }
-          if (categoryName === 'Abonnementen' && (itemLower.includes('year') || itemLower.includes('jaar'))) {
-            continue;
-          }
-          const catConfig = REVENUE_CATEGORIES[categoryName];
-          return {
-            category: categoryName,
-            btwRate: config.btwRate,
-            twinfieldAccount: config.twinfieldAccount,
-            specialHandling: catConfig?.specialHandling || null,
-          };
-        }
-      }
-    }
-  } else {
-    for (const categoryName of categoryOrder) {
-      const config = REVENUE_CATEGORIES[categoryName];
-      if (!config) continue;
-      
-      for (const keyword of config.keywords) {
-        if (itemLower.includes(keyword.toLowerCase())) {
-          if (categoryName === 'Rittenkaarten' && itemLower.includes('single')) {
-            continue;
-          }
-          if (categoryName === 'Abonnementen' && (itemLower.includes('year') || itemLower.includes('jaar'))) {
-            continue;
-          }
-          return {
-            category: categoryName,
-            btwRate: config.btwRate,
-            twinfieldAccount: config.twinfieldAccount,
-            specialHandling: config.specialHandling || null,
-          };
-        }
-      }
-    }
-  }
-  
-  return { category: "Overig", btwRate: 0.09, twinfieldAccount: "8999" };
-}
-
-function categorizeItemFromProduct(product: ProductSettings): CategoryResult {
-  return {
-    category: product.category,
-    btwRate: product.btwRate,
-    twinfieldAccount: product.twinfieldAccount || "8999",
-    specialHandling: product.hasAccrual ? 'accrual' : product.hasSpread ? 'spread_12' : null,
-  };
-}
-
 async function categorizeItem(
   itemName: string | undefined,
   customCategories: CustomCategoryConfig[] | null
@@ -269,24 +162,6 @@ async function categorizeItem(
   }
   
   const storedProduct = await storage.getProductByName(itemName);
-  if (storedProduct && storedProduct.isReviewed) {
-    return categorizeItemFromProduct(storedProduct);
-  }
-  
-  return categorizeItemByKeywords(itemName, customCategories);
-}
-
-// Cached version that uses pre-loaded product map (for performance)
-function categorizeItemCached(
-  itemName: string | undefined,
-  customCategories: CustomCategoryConfig[] | null,
-  productCache: Map<string, ProductSettings>
-): CategoryResult {
-  if (!itemName) {
-    return { category: "Overig", btwRate: 0.09, twinfieldAccount: "8999" };
-  }
-  
-  const storedProduct = productCache.get(itemName);
   if (storedProduct && storedProduct.isReviewed) {
     return categorizeItemFromProduct(storedProduct);
   }
