@@ -10,6 +10,7 @@ import {
   categorizeItemByKeywords,
   categorizeItemFromProduct,
   categorizeItemCached,
+  applyOnlineSingleClassOverride,
   type CategoryResult,
   type CustomCategoryConfig,
 } from "./categorization";
@@ -263,7 +264,8 @@ async function processReconciliation(
 
     // FIX 3: Categorize ALL transactions, not just Stripe payments
     // PERFORMANCE FIX: Use cached product lookup instead of database query per row
-    const { category, btwRate, twinfieldAccount } = categorizeItemCached(item, customCategories, productCache);
+    const rawCategorization = categorizeItemCached(item, customCategories, productCache);
+    const { category, btwRate, twinfieldAccount } = applyOnlineSingleClassOverride(rawCategorization, saleValue, customCategories);
     const catData = categoryTotals.get(category) || { 
       count: 0, 
       total: 0, 
