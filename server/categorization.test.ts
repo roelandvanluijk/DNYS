@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { categorizeItemByKeywords } from "./categorization";
+import { categorizeItemByKeywords, applyOnlineSingleClassOverride } from "./categorization";
 
 const customCategories = null; // exercise the REVENUE_CATEGORIES default path
 
@@ -31,5 +31,44 @@ describe("categorizeItemByKeywords (characterization)", () => {
   it("returns Overig for an empty item name", () => {
     const result = categorizeItemByKeywords(undefined, customCategories);
     expect(result.category).toBe("Overig");
+  });
+});
+
+describe("applyOnlineSingleClassOverride", () => {
+  const singleClassResult = { category: "Single Classes", btwRate: 0.09, twinfieldAccount: "8120", specialHandling: null };
+  const otherCategoryResult = { category: "Omzet Keuken", btwRate: 0.09, twinfieldAccount: "8001", specialHandling: null };
+
+  const customCategories = [
+    { name: "Online/Livestream", keywords: ["livestream", "online", "virtual"], btwRate: 0.21, twinfieldAccount: "2015", group: "yoga" as const },
+    { name: "Single Classes", keywords: ["yoga"], btwRate: 0.09, twinfieldAccount: "4071", group: "yoga" as const },
+  ];
+
+  it("reclassifies an exact €9.00 Single Classes sale to Online/Livestream, using live category_settings account/rate", () => {
+    const result = applyOnlineSingleClassOverride(singleClassResult, 9.00, customCategories);
+    expect(result.category).toBe("Online/Livestream");
+    expect(result.twinfieldAccount).toBe("2015"); // NOT the hardcoded schema default of 8200
+    expect(result.btwRate).toBe(0.21);
+  });
+
+  it("leaves a non-€9 Single Classes sale unchanged", () => {
+    expect(applyOnlineSingleClassOverride(singleClassResult, 9.01, customCategories).category).toBe("Single Classes");
+    expect(applyOnlineSingleClassOverride(singleClassResult, 8.99, customCategories).category).toBe("Single Classes");
+    expect(applyOnlineSingleClassOverride(singleClassResult, 17.00, customCategories).category).toBe("Single Classes");
+  });
+
+  it("never touches a category other than Single Classes, even at exactly €9.00", () => {
+    const result = applyOnlineSingleClassOverride(otherCategoryResult, 9.00, customCategories);
+    expect(result.category).toBe("Omzet Keuken");
+  });
+
+  it("falls back to the hardcoded REVENUE_CATEGORIES default when customCategories is null", () => {
+    const result = applyOnlineSingleClassOverride(singleClassResult, 9.00, null);
+    expect(result.category).toBe("Online/Livestream");
+    expect(result.twinfieldAccount).toBe("8200"); // the shared/schema.ts default
+  });
+
+  it("throws if customCategories is loaded but Online/Livestream is missing from it", () => {
+    const partialCategories = customCategories.filter(c => c.name !== "Online/Livestream");
+    expect(() => applyOnlineSingleClassOverride(singleClassResult, 9.00, partialCategories)).toThrow(/Online\/Livestream/);
   });
 });

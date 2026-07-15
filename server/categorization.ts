@@ -132,3 +132,34 @@ export function categorizeItemCached(
   return categorizeItemByKeywords(itemName, customCategories);
 }
 
+export function applyOnlineSingleClassOverride(
+  result: CategoryResult,
+  saleValue: number,
+  customCategories: CustomCategoryConfig[] | null,
+): CategoryResult {
+  if (result.category !== "Single Classes" || Math.round(saleValue * 100) !== 900) {
+    return result;
+  }
+
+  if (customCategories === null) {
+    const fallback = REVENUE_CATEGORIES["Online/Livestream"];
+    return {
+      category: "Online/Livestream",
+      btwRate: fallback.btwRate,
+      twinfieldAccount: fallback.twinfieldAccount,
+      specialHandling: fallback.specialHandling ?? null,
+    };
+  }
+
+  const online = customCategories.find(c => c.name === "Online/Livestream");
+  if (!online) {
+    throw new Error("Online/Livestream category not configured in category_settings");
+  }
+  return {
+    category: "Online/Livestream",
+    btwRate: online.btwRate,
+    twinfieldAccount: online.twinfieldAccount,
+    specialHandling: REVENUE_CATEGORIES["Online/Livestream"].specialHandling ?? null,
+  };
+}
+
