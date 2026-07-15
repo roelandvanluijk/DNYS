@@ -61,6 +61,12 @@ describe("applyOnlineSingleClassOverride", () => {
     expect(result.category).toBe("Omzet Keuken");
   });
 
+  it("does not throw for a non-Single-Classes category even when customCategories is missing Online/Livestream, proving the category+price guard runs before the customCategories lookup", () => {
+    const partialCategories = customCategories.filter(c => c.name !== "Online/Livestream");
+    const result = applyOnlineSingleClassOverride(otherCategoryResult, 9.00, partialCategories);
+    expect(result).toEqual(otherCategoryResult);
+  });
+
   it("falls back to the hardcoded REVENUE_CATEGORIES default when customCategories is null", () => {
     const result = applyOnlineSingleClassOverride(singleClassResult, 9.00, null);
     expect(result.category).toBe("Online/Livestream");

@@ -141,6 +141,18 @@ export function applyOnlineSingleClassOverride(
     return result;
   }
 
+  // These two branches look similar (both build an Online/Livestream CategoryResult)
+  // but they are NOT interchangeable — do not collapse them into a single
+  // `customCategories?.find(...) ?? REVENUE_CATEGORIES[...]` fallback.
+  //
+  // `customCategories === null` means category_settings was never loaded at all
+  // (e.g. an empty table), so falling back to the hardcoded schema default is safe.
+  //
+  // `customCategories` being a non-null array that's simply missing the
+  // "Online/Livestream" entry means settings ARE loaded, and this is a data-integrity
+  // gap (partial/corrupted config). Silently falling back there would book to a
+  // stale/dead Twinfield account (e.g. 8200) instead of the live one — it must
+  // throw instead so the gap gets fixed, not swept under the rug.
   if (customCategories === null) {
     const fallback = REVENUE_CATEGORIES["Online/Livestream"];
     return {
