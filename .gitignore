@@ -6,3 +6,4 @@ server/public
 vite.config.ts.*
 *.tar.gz
 /online-single-class-analysis.csv
+/correction-memo.xml
