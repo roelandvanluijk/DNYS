@@ -43,6 +43,8 @@ async function main() {
       throw new Error("Single Classes or Online/Livestream not found in category_settings");
     }
 
+    const seenPeriods = new Set<string>();
+
     for (const arg of args) {
       const [period, filePath] = arg.split("=");
       if (!period || !filePath) {
@@ -51,9 +53,25 @@ async function main() {
         continue;
       }
 
+      if (!/^\d{4}-\d{2}$/.test(period)) {
+        console.error(`Skipping malformed argument "${arg}" — period "${period}" does not match expected YYYY-MM format`);
+        failed.push(arg);
+        continue;
+      }
+
+      if (seenPeriods.has(period)) {
+        console.warn(`Skipping duplicate period "${period}" (argument "${arg}") — a period for this month was already processed. Remove the duplicate and re-run if this was unintentional.`);
+        failed.push(arg);
+        continue;
+      }
+
       try {
         const content = readFileSync(filePath, "utf-8");
         const parsed = Papa.parse<MomenceRow>(content, { header: true, skipEmptyLines: true });
+
+        if (parsed.errors.length > 0) {
+          console.warn(`${period}: CSV parser reported ${parsed.errors.length} row error(s) — some rows may have been skipped or misread. Review the source file.`);
+        }
 
         let grossTotal = 0;
         for (const row of parsed.data) {
@@ -76,6 +94,7 @@ async function main() {
           singleClassesRate: singleClasses.btwRate,
           onlineRate: online.btwRate,
         });
+        seenPeriods.add(period);
 
         if (period <= "2026-03") {
           const oldNetto = grossTotal / (1 + singleClasses.btwRate);
@@ -85,15 +104,17 @@ async function main() {
 
         succeeded.push(period);
       } catch (e) {
-        console.error(`Failed to process ${period} (${filePath}): ${(e as Error).message}`);
+        console.error(`Failed to process ${period} (${filePath}): ${e instanceof Error ? e.message : String(e)}`);
         failed.push(period);
       }
     }
 
     if (inputs.length > 0) {
       const xml = generateCorrectionMemoXml(inputs, generalSettings);
-      writeFileSync("./correction-memo.xml", xml);
-      console.log("Written to ./correction-memo.xml");
+      const sortedPeriods = [...succeeded].sort();
+      const outputPath = `./correction-memo-${sortedPeriods[0]}-to-${sortedPeriods[sortedPeriods.length - 1]}.xml`;
+      writeFileSync(outputPath, xml);
+      console.log(`Written to ${outputPath}`);
     } else {
       console.log("No periods processed successfully — correction-memo.xml not written.");
     }
@@ -109,6 +130,10 @@ async function main() {
     console.log("Belastingdienst suppletie threshold is €1.000 — check this delta against it before deciding whether a formal suppletieaangifte is required.");
     console.log(`\nSucceeded (${succeeded.length}): ${succeeded.join(", ") || "none"}`);
     console.log(`Failed (${failed.length}, re-run these): ${failed.join(", ") || "none"}`);
+
+    if (failedQ1.length > 0 || inputs.length === 0) {
+      process.exitCode = 1;
+    }
   } finally {
     await pool.end();
   }
