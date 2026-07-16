@@ -34,60 +34,80 @@ async function main() {
     process.exit(1);
   }
 
-  const customCategories: CustomCategoryConfig[] | null = await storage.getCategorySettings();
-  const allProducts: ProductSettings[] = await storage.getAllProducts();
-  const productCache = new Map(allProducts.map(p => [p.itemName, p]));
+  try {
+    const customCategories: CustomCategoryConfig[] | null = await storage.getCategorySettings();
+    const allProducts: ProductSettings[] = await storage.getAllProducts();
+    const productCache = new Map(allProducts.map(p => [p.itemName, p]));
 
-  const singleClasses = customCategories?.find(c => c.name === "Single Classes");
-  const singleClassesAccount = singleClasses?.twinfieldAccount ?? "8120";
-  const singleClassesBtw = singleClasses?.btwRate ?? 0.09;
-  const online = customCategories?.find(c => c.name === "Online/Livestream");
-  const onlineAccount = online?.twinfieldAccount ?? "8200";
-  const onlineBtw = online?.btwRate ?? 0.21;
+    const singleClasses = customCategories?.find(c => c.name === "Single Classes");
+    const singleClassesAccount = singleClasses?.twinfieldAccount ?? "8120";
+    const singleClassesBtw = singleClasses?.btwRate ?? 0.09;
+    const online = customCategories?.find(c => c.name === "Online/Livestream");
+    const onlineAccount = online?.twinfieldAccount ?? "8200";
+    const onlineBtw = online?.btwRate ?? 0.21;
 
-  const rows: string[] = [
-    "period,reclassified_count,gross_total,old_netto,old_btw,new_netto,new_btw,btw_delta",
-  ];
+    const rows: string[] = [
+      "period,reclassified_count,gross_total,old_netto,old_btw,new_netto,new_btw,btw_delta",
+    ];
+    const succeeded: string[] = [];
+    const failed: string[] = [];
 
-  for (const arg of args) {
-    const [period, filePath] = arg.split("=");
-    const content = readFileSync(filePath, "utf-8");
-    const parsed = Papa.parse<MomenceRow>(content, { header: true, skipEmptyLines: true });
+    for (const arg of args) {
+      const [period, filePath] = arg.split("=");
+      if (!period || !filePath) {
+        console.error(`Skipping malformed argument "${arg}" — expected format period=./file.csv (e.g. 2026-01=./jan.csv)`);
+        failed.push(arg);
+        continue;
+      }
 
-    let reclassifiedCount = 0;
-    let grossTotal = 0;
+      try {
+        const content = readFileSync(filePath, "utf-8");
+        const parsed = Papa.parse<MomenceRow>(content, { header: true, skipEmptyLines: true });
 
-    for (const row of parsed.data) {
-      const item = row.Item || "";
-      const saleValue = parseNumber(row["Sale value"]);
-      const raw = categorizeItemCached(item, customCategories, productCache);
-      const final = applyOnlineSingleClassOverride(raw, saleValue, customCategories);
-      if (raw.category === "Single Classes" && final.category === "Online/Livestream") {
-        reclassifiedCount++;
-        grossTotal += saleValue;
+        let reclassifiedCount = 0;
+        let grossTotal = 0;
+
+        for (const row of parsed.data) {
+          const item = row.Item || "";
+          const saleValue = parseNumber(row["Sale value"]);
+          const raw = categorizeItemCached(item, customCategories, productCache);
+          const final = applyOnlineSingleClassOverride(raw, saleValue, customCategories);
+          if (raw.category === "Single Classes" && final.category === "Online/Livestream") {
+            reclassifiedCount++;
+            grossTotal += saleValue;
+          }
+        }
+
+        grossTotal = round2(grossTotal);
+        const oldNetto = round2(grossTotal / (1 + singleClassesBtw));
+        const oldBtw = round2(grossTotal - oldNetto);
+        const newNetto = round2(grossTotal / (1 + onlineBtw));
+        const newBtw = round2(grossTotal - newNetto);
+        const btwDelta = round2(newBtw - oldBtw);
+
+        console.log(`\n=== ${period} ===`);
+        console.log(`Reclassified: ${reclassifiedCount} transactions, €${grossTotal} gross`);
+        console.log(`  Old (Single Classes @ ${singleClassesBtw * 100}%, account ${singleClassesAccount}): netto €${oldNetto}, BTW €${oldBtw}`);
+        console.log(`  New (Online/Livestream @ ${onlineBtw * 100}%, account ${onlineAccount}): netto €${newNetto}, BTW €${newBtw}`);
+        console.log(`  BTW delta: €${btwDelta}`);
+
+        rows.push(`${period},${reclassifiedCount},${grossTotal},${oldNetto},${oldBtw},${newNetto},${newBtw},${btwDelta}`);
+        succeeded.push(period);
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e);
+        console.error(`Failed to process ${period} (${filePath}): ${message}`);
+        failed.push(period);
       }
     }
 
-    grossTotal = round2(grossTotal);
-    const oldNetto = round2(grossTotal / (1 + singleClassesBtw));
-    const oldBtw = round2(grossTotal - oldNetto);
-    const newNetto = round2(grossTotal / (1 + onlineBtw));
-    const newBtw = round2(grossTotal - newNetto);
-    const btwDelta = round2(newBtw - oldBtw);
-
-    console.log(`\n=== ${period} ===`);
-    console.log(`Reclassified: ${reclassifiedCount} transactions, €${grossTotal} gross`);
-    console.log(`  Old (Single Classes @ ${singleClassesBtw * 100}%, account ${singleClassesAccount}): netto €${oldNetto}, BTW €${oldBtw}`);
-    console.log(`  New (Online/Livestream @ ${onlineBtw * 100}%, account ${onlineAccount}): netto €${newNetto}, BTW €${newBtw}`);
-    console.log(`  BTW delta: €${btwDelta}`);
-
-    rows.push(`${period},${reclassifiedCount},${grossTotal},${oldNetto},${oldBtw},${newNetto},${newBtw},${btwDelta}`);
+    writeFileSync("./online-single-class-analysis.csv", rows.join("\n"));
+    console.log("\nWritten to ./online-single-class-analysis.csv");
+    console.log(`\nSummary: ${succeeded.length} period(s) succeeded, ${failed.length} period(s) failed.`);
+    if (succeeded.length > 0) console.log(`  Succeeded: ${succeeded.join(", ")}`);
+    if (failed.length > 0) console.log(`  Failed (re-run these): ${failed.join(", ")}`);
+  } finally {
+    await pool.end();
   }
-
-  writeFileSync("./online-single-class-analysis.csv", rows.join("\n"));
-  console.log("\nWritten to ./online-single-class-analysis.csv");
-
-  await pool.end();
 }
 
 main().catch(e => { console.error(e); process.exit(1); });
