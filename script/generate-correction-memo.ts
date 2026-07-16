@@ -26,23 +26,23 @@ async function main() {
     process.exit(1);
   }
 
-  const customCategories: CustomCategoryConfig[] | null = await storage.getCategorySettings();
-  const allProducts: ProductSettings[] = await storage.getAllProducts();
-  const productCache = new Map(allProducts.map(p => [p.itemName, p]));
-  const generalSettings = await storage.getGeneralSettings();
-
-  const singleClasses = customCategories?.find(c => c.name === "Single Classes");
-  const online = customCategories?.find(c => c.name === "Online/Livestream");
-  if (!singleClasses || !online) {
-    throw new Error("Single Classes or Online/Livestream not found in category_settings");
-  }
-
   const inputs: CorrectionMemoInput[] = [];
   const succeeded: string[] = [];
   const failed: string[] = [];
   let q1BtwDelta = 0;
 
   try {
+    const customCategories: CustomCategoryConfig[] | null = await storage.getCategorySettings();
+    const allProducts: ProductSettings[] = await storage.getAllProducts();
+    const productCache = new Map(allProducts.map(p => [p.itemName, p]));
+    const generalSettings = await storage.getGeneralSettings();
+
+    const singleClasses = customCategories?.find(c => c.name === "Single Classes");
+    const online = customCategories?.find(c => c.name === "Online/Livestream");
+    if (!singleClasses || !online) {
+      throw new Error("Single Classes or Online/Livestream not found in category_settings");
+    }
+
     for (const arg of args) {
       const [period, filePath] = arg.split("=");
       if (!period || !filePath) {
@@ -98,14 +98,14 @@ async function main() {
       console.log("No periods processed successfully — correction-memo.xml not written.");
     }
 
-    console.log(`Q1 (Jan-Mar) cumulative BTW delta: €${Math.round(q1BtwDelta * 100) / 100}`);
     const q1Periods = ["2026-01", "2026-02", "2026-03"];
     const failedQ1 = q1Periods.filter(p => failed.includes(p));
     if (failedQ1.length > 0) {
       console.warn(
-        `WARNING: Q1 period(s) ${failedQ1.join(", ")} failed to process — the Q1 BTW delta above is INCOMPLETE and must not be used for the suppletie decision until all Q1 periods succeed.`
+        `WARNING: Q1 period(s) ${failedQ1.join(", ")} failed to process — the Q1 BTW delta below is INCOMPLETE and must not be used for the suppletie decision until all Q1 periods succeed.`
       );
     }
+    console.log(`Q1 (Jan-Mar) cumulative BTW delta: €${Math.round(q1BtwDelta * 100) / 100}`);
     console.log("Belastingdienst suppletie threshold is €1.000 — check this delta against it before deciding whether a formal suppletieaangifte is required.");
     console.log(`\nSucceeded (${succeeded.length}): ${succeeded.join(", ") || "none"}`);
     console.log(`Failed (${failed.length}, re-run these): ${failed.join(", ") || "none"}`);
