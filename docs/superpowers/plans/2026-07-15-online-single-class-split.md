@@ -901,6 +901,11 @@ async function main() {
       grossTotal: Math.round(grossTotal * 100) / 100,
       singleClassesAccount: singleClasses.twinfieldAccount,
       onlineAccount: online.twinfieldAccount,
+      // CorrectionMemoInput requires these two explicitly (added during Task 7's review fix,
+      // which removed the function's own hardcoded 0.09/0.21 constants in favor of always
+      // using live category_settings — do not hardcode these here either).
+      singleClassesRate: singleClasses.btwRate,
+      onlineRate: online.btwRate,
     });
 
     if (period <= "2026-03") {
