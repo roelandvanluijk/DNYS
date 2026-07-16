@@ -120,10 +120,10 @@ async function main() {
     }
 
     const q1Periods = ["2026-01", "2026-02", "2026-03"];
-    const failedQ1 = q1Periods.filter(p => failed.includes(p));
-    if (failedQ1.length > 0) {
+    const missingQ1 = q1Periods.filter(p => !succeeded.includes(p));
+    if (missingQ1.length > 0) {
       console.warn(
-        `WARNING: Q1 period(s) ${failedQ1.join(", ")} failed to process — the Q1 BTW delta below is INCOMPLETE and must not be used for the suppletie decision until all Q1 periods succeed.`
+        `WARNING: Q1 period(s) ${missingQ1.join(", ")} did not process successfully — the Q1 BTW delta below is INCOMPLETE and must not be used for the suppletie decision until all Q1 periods succeed.`
       );
     }
     console.log(`Q1 (Jan-Mar) cumulative BTW delta: €${Math.round(q1BtwDelta * 100) / 100}`);
@@ -131,7 +131,7 @@ async function main() {
     console.log(`\nSucceeded (${succeeded.length}): ${succeeded.join(", ") || "none"}`);
     console.log(`Failed (${failed.length}, re-run these): ${failed.join(", ") || "none"}`);
 
-    if (failedQ1.length > 0 || inputs.length === 0) {
+    if (missingQ1.length > 0 || inputs.length === 0) {
       process.exitCode = 1;
     }
   } finally {
