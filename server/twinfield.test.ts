@@ -34,7 +34,7 @@ describe("generateCorrectionMemoXml", () => {
   const generalSettings = { office: "1000", journalCode: "MEMO", accrualCrossAccount: "1809", stripeFeeAccount: "4900" };
 
   const oneMonth: CorrectionMemoInput[] = [
-    { period: "2026-01", grossTotal: 900, singleClassesAccount: "4071", onlineAccount: "2015" },
+    { period: "2026-01", grossTotal: 900, singleClassesAccount: "4071", onlineAccount: "2015", singleClassesRate: 0.09, onlineRate: 0.21 },
   ];
 
   it("produces one transaction dated with the original month, not today", () => {
@@ -61,15 +61,33 @@ describe("generateCorrectionMemoXml", () => {
     expect(xml).toContain(`<vatvalue>${newBtw}</vatvalue>`);
   });
 
-  it("self-balances: debit netto+vat equals credit netto+vat for the same gross", () => {
-    const xml = generateCorrectionMemoXml(oneMonth, generalSettings);
-    expect(xml).toBeTruthy();
+  it("self-balances: netto+vatvalue reconstructs the gross on both the debit and credit side, for a non-round amount", () => {
+    const messyGross = 1234.56;
+    const messy: CorrectionMemoInput[] = [
+      { period: "2026-03", grossTotal: messyGross, singleClassesAccount: "4071", onlineAccount: "2015", singleClassesRate: 0.09, onlineRate: 0.21 },
+    ];
+    const xml = generateCorrectionMemoXml(messy, generalSettings);
+
+    // Parse the debit line (Single Classes, dim1 4071) and credit line (Online, dim1 2015) out of the XML.
+    const debitLineMatch = xml.match(/<dim1>4071<\/dim1>[\s\S]*?<value>([\d.]+)<\/value>[\s\S]*?<vatvalue>([\d.]+)<\/vatvalue>/);
+    const creditLineMatch = xml.match(/<dim1>2015<\/dim1>[\s\S]*?<value>([\d.]+)<\/value>[\s\S]*?<vatvalue>([\d.]+)<\/vatvalue>/);
+
+    expect(debitLineMatch).not.toBeNull();
+    expect(creditLineMatch).not.toBeNull();
+
+    const debitNetto = parseFloat(debitLineMatch![1]);
+    const debitVat = parseFloat(debitLineMatch![2]);
+    const creditNetto = parseFloat(creditLineMatch![1]);
+    const creditVat = parseFloat(creditLineMatch![2]);
+
+    expect(Math.abs(debitNetto + debitVat - messyGross)).toBeLessThanOrEqual(0.01);
+    expect(Math.abs(creditNetto + creditVat - messyGross)).toBeLessThanOrEqual(0.01);
   });
 
   it("produces one transaction per month, for multiple months", () => {
     const twoMonths: CorrectionMemoInput[] = [
-      { period: "2026-01", grossTotal: 900, singleClassesAccount: "4071", onlineAccount: "2015" },
-      { period: "2026-02", grossTotal: 450, singleClassesAccount: "4071", onlineAccount: "2015" },
+      { period: "2026-01", grossTotal: 900, singleClassesAccount: "4071", onlineAccount: "2015", singleClassesRate: 0.09, onlineRate: 0.21 },
+      { period: "2026-02", grossTotal: 450, singleClassesAccount: "4071", onlineAccount: "2015", singleClassesRate: 0.09, onlineRate: 0.21 },
     ];
     const xml = generateCorrectionMemoXml(twoMonths, generalSettings);
     expect((xml.match(/<transaction /g) || []).length).toBe(2);
@@ -78,9 +96,23 @@ describe("generateCorrectionMemoXml", () => {
 
   it("skips a month with zero gross total", () => {
     const withZero: CorrectionMemoInput[] = [
-      { period: "2026-01", grossTotal: 0, singleClassesAccount: "4071", onlineAccount: "2015" },
+      { period: "2026-01", grossTotal: 0, singleClassesAccount: "4071", onlineAccount: "2015", singleClassesRate: 0.09, onlineRate: 0.21 },
     ];
     const xml = generateCorrectionMemoXml(withZero, generalSettings);
     expect((xml.match(/<transaction /g) || []).length).toBe(0);
+  });
+
+  it("throws when singleClassesRate and onlineRate are equal, since that would book a zero-delta correction", () => {
+    const sameRate: CorrectionMemoInput[] = [
+      { period: "2026-01", grossTotal: 900, singleClassesAccount: "4071", onlineAccount: "2015", singleClassesRate: 0.09, onlineRate: 0.09 },
+    ];
+    expect(() => generateCorrectionMemoXml(sameRate, generalSettings)).toThrow(/must differ/);
+  });
+
+  it("throws when grossTotal is negative", () => {
+    const negativeGross: CorrectionMemoInput[] = [
+      { period: "2026-01", grossTotal: -900, singleClassesAccount: "4071", onlineAccount: "2015", singleClassesRate: 0.09, onlineRate: 0.21 },
+    ];
+    expect(() => generateCorrectionMemoXml(negativeGross, generalSettings)).toThrow(/must not be negative/);
   });
 });

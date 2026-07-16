@@ -123,13 +123,15 @@ export interface CorrectionMemoInput {
   grossTotal: number; // total gross (BTW-inclusive) sale value being reclassified for this month
   singleClassesAccount: string; // current Single Classes twinfield account (from category_settings)
   onlineAccount: string; // current Online/Livestream twinfield account (from category_settings)
+  singleClassesRate: number; // current Single Classes BTW rate (from category_settings), e.g. 0.09
+  onlineRate: number; // current Online/Livestream BTW rate (from category_settings), e.g. 0.21
 }
 
-const SINGLE_CLASS_BTW_RATE = 0.09;
-const ONLINE_BTW_RATE = 0.21;
-
 // Generates a one-time correction memo per affected month: reverses gross revenue that was
-// originally booked to Single Classes (9% BTW) and re-books it to Online/Livestream (21% BTW).
+// originally booked to Single Classes (9% BTW by default) and re-books it to Online/Livestream
+// (21% BTW by default). Rates are always taken from the caller's live category_settings — never
+// hardcoded here — so the booked correction can never silently drift out of sync with what was
+// actually configured at the time.
 // The customer paid the same gross amount either way — only the internal categorization was
 // wrong — so debit and credit always represent the same gross euro figure by construction.
 export function generateCorrectionMemoXml(
@@ -140,12 +142,25 @@ export function generateCorrectionMemoXml(
   const transactions: string[] = [];
 
   for (const input of inputs) {
+    if (input.grossTotal < 0) {
+      throw new Error(`Correction memo for ${input.period}: grossTotal must not be negative (got ${input.grossTotal})`);
+    }
+
     const gross = round2(input.grossTotal);
     if (gross === 0) continue;
 
-    const oldNetto = round2(gross / (1 + SINGLE_CLASS_BTW_RATE));
+    // The tautological check further below (debit/credit reconstructing to `gross`) is true by
+    // construction regardless of which rates were used — it does NOT catch identical or swapped
+    // rates, which would silently book a zero-delta "correction". This check does.
+    if (input.singleClassesRate === input.onlineRate) {
+      throw new Error(
+        `Correction memo for ${input.period}: singleClassesRate and onlineRate must differ (got ${input.singleClassesRate} for both) — a correction between identical rates books no actual BTW delta`
+      );
+    }
+
+    const oldNetto = round2(gross / (1 + input.singleClassesRate));
     const oldBtw = round2(gross - oldNetto);
-    const newNetto = round2(gross / (1 + ONLINE_BTW_RATE));
+    const newNetto = round2(gross / (1 + input.onlineRate));
     const newBtw = round2(gross - newNetto);
 
     const debitTotal = round2(oldNetto + oldBtw);
@@ -158,8 +173,8 @@ export function generateCorrectionMemoXml(
 
     const label = monthLabel(input.period);
     const lines = [
-      debitLineWithVat(1, input.singleClassesAccount, oldNetto, oldBtw, "VL", `Correctie €9 online -> ${label}`),
-      creditLine(2, input.onlineAccount, newNetto, newBtw, "VH", `Correctie €9 online -> ${label}`),
+      debitLineWithVat(1, input.singleClassesAccount, oldNetto, oldBtw, btwCode(input.singleClassesRate), `Correctie €9 online -> ${label}`),
+      creditLine(2, input.onlineAccount, newNetto, newBtw, btwCode(input.onlineRate), `Correctie €9 online -> ${label}`),
     ];
 
     transactions.push(buildTransaction({
