@@ -43,6 +43,12 @@ describe("generateCorrectionMemoXml", () => {
     expect(xml).toContain("<date>20260131</date>");
   });
 
+  it("uses the journal code from generalSettings", () => {
+    const customJournalCode = { ...generalSettings, journalCode: "MOMENCE" };
+    const xml = generateCorrectionMemoXml(oneMonth, customJournalCode);
+    expect(xml).toContain("<code>MOMENCE</code>");
+  });
+
   it("debits the Single Classes account at 9% and credits Online/Livestream at 21%, both from the same gross", () => {
     const xml = generateCorrectionMemoXml(oneMonth, generalSettings);
     const oldNetto = (900 / 1.09).toFixed(2);   // 825.69
@@ -82,6 +88,18 @@ describe("generateCorrectionMemoXml", () => {
 
     expect(Math.abs(debitNetto + debitVat - messyGross)).toBeLessThanOrEqual(0.01);
     expect(Math.abs(creditNetto + creditVat - messyGross)).toBeLessThanOrEqual(0.01);
+  });
+
+  it("stamps KPL0000 cost center (dim2) on the 4xxx P&L line, since Twinfield rejects 4xxx accounts without a relatie/kostenplaats", () => {
+    const xml = generateCorrectionMemoXml(oneMonth, generalSettings);
+    const debitLine = xml.match(/<line id="1">[\s\S]*?<\/line>/)![0];
+    const creditLine = xml.match(/<line id="2">[\s\S]*?<\/line>/)![0];
+
+    expect(debitLine).toContain("<dim1>4071</dim1>");
+    expect(debitLine).toContain("<dim2>KPL0000</dim2>");
+    // Online/Livestream account 2015 is outside the 4xxx range, so dim2 stays empty.
+    expect(creditLine).toContain("<dim1>2015</dim1>");
+    expect(creditLine).toContain("<dim2/>");
   });
 
   it("produces one transaction per month, for multiple months", () => {

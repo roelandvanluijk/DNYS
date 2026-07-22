@@ -448,7 +448,7 @@ export type GeneralSettingsRow = typeof generalSettings.$inferSelect;
 
 export const DEFAULT_GENERAL_SETTINGS = {
   office: "",
-  journalCode: "MEMO",
+  journalCode: "MOMENCE",
   accrualCrossAccount: "1809",
   stripeFeeAccount: "4900",
 };

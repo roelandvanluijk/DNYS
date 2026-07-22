@@ -173,8 +173,8 @@ export function generateCorrectionMemoXml(
 
     const label = monthLabel(input.period);
     const lines = [
-      debitLineWithVat(1, input.singleClassesAccount, oldNetto, oldBtw, btwCode(input.singleClassesRate), `Correctie €9 online -> ${label}`),
-      creditLine(2, input.onlineAccount, newNetto, newBtw, btwCode(input.onlineRate), `Correctie €9 online -> ${label}`),
+      debitLineWithVat(1, input.singleClassesAccount, oldNetto, oldBtw, btwCode(input.singleClassesRate), `Correctie €9 online -> ${label}`, costCenter(input.singleClassesAccount)),
+      creditLine(2, input.onlineAccount, newNetto, newBtw, btwCode(input.onlineRate), `Correctie €9 online -> ${label}`, costCenter(input.onlineAccount)),
     ];
 
     transactions.push(buildTransaction({

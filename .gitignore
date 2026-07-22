@@ -8,3 +8,4 @@ vite.config.ts.*
 /online-single-class-analysis.csv
 /correction-memo.xml
 /correction-memo-*.xml
+/momence-split/

@@ -60,7 +60,7 @@ export default function SettingsPage() {
   const [editedPaymentMethods, setEditedPaymentMethods] = useState<PaymentMethodConfig[]>([]);
   const [editedGeneral, setEditedGeneral] = useState<GeneralSettingsConfig>({
     office: "",
-    journalCode: "MEMO",
+    journalCode: "MOMENCE",
     accrualCrossAccount: "1809",
     stripeFeeAccount: "4900",
   });
